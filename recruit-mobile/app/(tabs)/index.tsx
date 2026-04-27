@@ -31,10 +31,14 @@ const colors = {
   tabBg: "#1e293b",
 };
 
+// --- ステータスラベルの取得関数 ---
 const getStatusLabel = (c) => {
   if (!c || !c.status) return "受付";
   const st = String(c.status);
-  if (st === "9") return c.decline_reason || "終了";
+
+  // ★修正：不採用(9)の場合は、理由に関わらず「不採用」と表示する
+  if (st === "9") return "不採用";
+
   const labels = {
     "1": "受付",
     "2": "面接打診中",

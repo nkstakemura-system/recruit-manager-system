@@ -331,8 +331,8 @@ const ProgressStatus = ({ candidate, s, thm }) => {
   const labels = isCoop
     ? {
         1: "受付",
-        2: "連絡待ち", // 協力業者：社内担当者が決まった状態
-        9: c.subcontract_status || "終了", // 下請登録/非登録を優先表示
+        2: "連絡待ち",
+        9: c.subcontract_status || "終了",
       }
     : {
         1: "受付",
@@ -341,10 +341,11 @@ const ProgressStatus = ({ candidate, s, thm }) => {
         4: "2次面接予定",
         5: "内定",
         6: "入社",
+        9: "不採用", // ★ここに追加
       };
 
-  label =
-    st === "9" && !isCoop ? c.decline_reason || "終了" : labels[st] || "受付";
+  // ★修正：不採用（9）かつ個人（!isCoop）のときは、文字を「不採用」に固定する
+  label = String(st) === "9" && !isCoop ? "不採用" : labels[st] || "受付";
 
   // --- スタイル適用 ---
 
