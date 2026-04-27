@@ -3706,18 +3706,23 @@ const Dashboard = () => {
 
   if (loading) return <div style={s.main}>読み込み中...</div>;
 
-  // 有効なデータのみ（削除・退職済みは除外。ただし協力業者は含める）
+  // 【滞留用】有効なデータのみ（削除・退職済みは除外）
   const activeCands = cands.filter((c) => !c.is_deleted && !c.is_retired);
 
-  const totalActive = activeCands.length;
-  // 選考中などは「個人(is_coopではない)」のみでカウント
+  // 【統計用】過去の全データ（一覧から削除しても、辞退・不採用の記録として全件残す！）
+  const allHistoricalCands = cands;
+
+  // KPI: 滞留している個人応募者のみをカウント（協力業者は除外して数字を正確に）
+  const totalActive = activeCands.filter((c) => !c.is_coop).length;
   const inProgress = activeCands.filter(
     (c) => !c.is_coop && ["1", "2", "3", "4"].includes(String(c.status)),
   ).length;
   const hiredOrOffer = activeCands.filter(
     (c) => !c.is_coop && ["5", "6"].includes(String(c.status)),
   ).length;
-  const declined = activeCands.filter(
+
+  // 累計の不採用・辞退者は、削除済みデータも含めて全件からカウント！
+  const declined = allHistoricalCands.filter(
     (c) => !c.is_coop && String(c.status) === "9",
   ).length;
 
@@ -3793,10 +3798,11 @@ const Dashboard = () => {
     )
     .slice(0, 3);
 
-  const periodCands = cands.filter((c) => !c.is_deleted);
-
+  // ★統計処理: 「削除済み」のデータも含めて集計する
   const monthlyStats = monthsInPeriod.map((mon) => {
-    const monthCands = periodCands.filter((c) => {
+    // is_deletedで弾かず、allHistoricalCandsを使用
+    const monthCands = allHistoricalCands.filter((c) => {
+      if (!c.applied_at) return false;
       const d = new Date(c.applied_at);
       return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
     });
@@ -3968,18 +3974,22 @@ const Dashboard = () => {
         >
           {[
             {
-              title: "現在の有効応募 (滞留)",
+              title: "現在の有効応募 (個人滞留)",
               value: totalActive,
               color: thm.txt,
             },
-            { title: "選考進行中 (個人)", value: inProgress, color: thm.pri },
             {
-              title: "内定・入社 (個人)",
+              title: "選考進行中 (個人滞留)",
+              value: inProgress,
+              color: thm.pri,
+            },
+            {
+              title: "内定・入社 (個人滞留)",
               value: hiredOrOffer,
               color: "#16a34a",
             },
             {
-              title: "不採用・辞退 (個人累計)",
+              title: "不採用・辞退 (累計全件)",
               value: declined,
               color: thm.dng,
             },
@@ -4129,7 +4139,6 @@ const Dashboard = () => {
               <strong style={{ fontSize: "28px" }}>{totalPeriodCands}</strong>
               <span style={{ fontSize: "14px", color: thm.mut }}>名</span>
             </div>
-            {/* ★協力業者の枠を追加 */}
             <div>
               <div
                 style={{
@@ -4467,7 +4476,7 @@ const Dashboard = () => {
                       }}
                     ></div>
 
-                    {/* 面接・内定は個人応募のバーに重ねるか、横に並べるか。ここでは視認性のため絶対配置で重ねます */}
+                    {/* 面接・内定は個人応募のバーに重ねる */}
                     <div
                       style={{
                         position: "absolute",

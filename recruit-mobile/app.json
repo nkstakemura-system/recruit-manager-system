@@ -17,10 +17,11 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.nihonkankyo.recruit"
+      "edgeToEdgeEnabled": true,
+      "package": "com.nks.recruitmanager"
     },
     "extra": {
       "eas": {

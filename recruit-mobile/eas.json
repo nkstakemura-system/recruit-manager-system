@@ -10,7 +10,7 @@
     "preview": {
       "distribution": "internal",
       "android": {
-        "buildType": "apk" // ★これを必ず追記する！
+        "buildType": "apk"
       }
     },
     "production": {}

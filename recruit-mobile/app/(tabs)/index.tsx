@@ -106,56 +106,73 @@ export default function App() {
 
   // --- ① ダッシュボード ---
   const renderDashboard = () => {
-    const total = activeCands.length;
-    const inProgress = activeCands.filter((c) =>
-      ["1", "2", "3", "4"].includes(String(c.status)),
-    ).length;
-    const offers = activeCands.filter((c) =>
-      ["5", "6"].includes(String(c.status)),
-    ).length;
-    const declined = activeCands.filter((c) => String(c.status) === "9").length;
+    // 【滞留用】現在動いている応募者（削除済み・退職済みは除外）
+    const activeCands = candidates.filter(
+      (c) => !c.is_deleted && !c.is_retired,
+    );
+    // 【統計用】過去の全データ（一覧から削除しても、辞退・不採用の記録として全件残す！）
+    const allHistoricalCands = candidates;
 
+    // KPI: 滞留している個人応募者のみをカウント（協力業者は含まない）
+    const totalActive = activeCands.filter((c) => !c.is_coop).length;
+    const inProgress = activeCands.filter(
+      (c) => !c.is_coop && ["1", "2", "3", "4"].includes(String(c.status)),
+    ).length;
+    const offers = activeCands.filter(
+      (c) => !c.is_coop && ["5", "6"].includes(String(c.status)),
+    ).length;
+    // 累計の不採用・辞退者は、削除済みデータも含めて全件からカウント！
+    const declined = allHistoricalCands.filter(
+      (c) => !c.is_coop && String(c.status) === "9",
+    ).length;
+
+    // 選考パイプライン (個人のみ)
     const pipeline = [
       {
         id: "1",
         label: "受付",
-        count: activeCands.filter((c) => String(c.status) === "1").length,
+        count: activeCands.filter((c) => !c.is_coop && String(c.status) === "1")
+          .length,
         color: "#94a3b8",
       },
       {
         id: "2",
         label: "面接打診中",
-        count: activeCands.filter((c) => String(c.status) === "2").length,
+        count: activeCands.filter((c) => !c.is_coop && String(c.status) === "2")
+          .length,
         color: "#f97316",
       },
       {
         id: "3",
         label: "1次面接予定",
-        count: activeCands.filter((c) => String(c.status) === "3").length,
+        count: activeCands.filter((c) => !c.is_coop && String(c.status) === "3")
+          .length,
         color: "#22c55e",
       },
       {
         id: "4",
         label: "2次面接予定",
-        count: activeCands.filter((c) => String(c.status) === "4").length,
+        count: activeCands.filter((c) => !c.is_coop && String(c.status) === "4")
+          .length,
         color: "#10b981",
       },
       {
         id: "5",
         label: "内定",
-        count: activeCands.filter((c) => String(c.status) === "5").length,
+        count: activeCands.filter((c) => !c.is_coop && String(c.status) === "5")
+          .length,
         color: "#3b82f6",
       },
       {
         id: "6",
         label: "入社前",
         count: activeCands.filter((c) => {
-          if (String(c.status) !== "6" || !c.expected_join_date) return false;
+          if (c.is_coop || String(c.status) !== "6" || !c.expected_join_date)
+            return false;
           const joinDate = new Date(c.expected_join_date);
           joinDate.setHours(0, 0, 0, 0);
           const today = new Date();
           today.setHours(0, 0, 0, 0);
-          // 入社日が「今日以降」の未来であれば滞留（入社前）としてカウント
           return joinDate >= today;
         }).length,
         color: "#8b5cf6",
@@ -163,9 +180,11 @@ export default function App() {
     ];
     const maxPipeline = Math.max(...pipeline.map((p) => p.count), 1);
 
+    // 直近の入社予定 (個人のみ)
     const upcomingJoins = activeCands
       .filter(
         (c) =>
+          !c.is_coop &&
           (String(c.status) === "5" || String(c.status) === "6") &&
           c.expected_join_date,
       )
@@ -180,6 +199,7 @@ export default function App() {
       )
       .slice(0, 3);
 
+    // 期別の月リスト作成
     const today = new Date();
     const currentYear = today.getFullYear();
     const currentMonth = today.getMonth() + 1;
@@ -189,7 +209,6 @@ export default function App() {
     let y = startYear;
     let m = 8;
     while (true) {
-      // ★ key（背番号）を追加してエラーを解消
       monthsInPeriod.push({ y, m, key: `${y}-${m}`, label: `${y}/${m}` });
       if (y === currentYear && m === currentMonth) break;
       m++;
@@ -199,24 +218,36 @@ export default function App() {
       }
     }
 
-    const periodCands = candidates.filter((c) => !c.is_deleted);
+    // ★統計処理: 「削除済み」のデータも含めて集計する
     const monthlyStats = monthsInPeriod.map((mon) => {
-      const monthCands = periodCands.filter((c) => {
+      // is_deleted で弾かない！
+      const monthCands = allHistoricalCands.filter((c) => {
+        if (!c.applied_at) return false;
         const d = new Date(c.applied_at);
         return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
       });
-      const count = monthCands.length;
+
+      const countTotal = monthCands.length;
+      const coops = monthCands.filter((c) => c.is_coop).length;
+      const countIndiv = countTotal - coops;
+
+      // 個人の実績のみ抽出
       const interviews = monthCands.filter(
         (c) =>
-          c.interview_1_date || ["3", "4", "5", "6"].includes(String(c.status)),
+          !c.is_coop &&
+          (c.interview_1_date ||
+            ["3", "4", "5", "6"].includes(String(c.status))),
       ).length;
-      const offersCount = monthCands.filter((c) =>
-        ["5", "6"].includes(String(c.status)),
+      const offersCount = monthCands.filter(
+        (c) => !c.is_coop && ["5", "6"].includes(String(c.status)),
       ).length;
-      const joins = monthCands.filter((c) => String(c.status) === "6").length;
+      const joins = monthCands.filter(
+        (c) => !c.is_coop && String(c.status) === "6",
+      ).length;
       const declinesCount = monthCands.filter(
-        (c) => String(c.status) === "9",
+        (c) => !c.is_coop && String(c.status) === "9",
       ).length;
+
       const expense = exps
         .filter((e) => {
           const d = new Date(e.expense_date);
@@ -226,19 +257,30 @@ export default function App() {
 
       return {
         ...mon,
-        count,
+        countTotal,
+        countIndiv,
+        coops,
         interviews,
         offers: offersCount,
         joins,
         declinesCount,
         expense,
-        interviewRate: count ? Math.round((interviews / count) * 100) : 0,
-        hireRate: count ? Math.round((offersCount / count) * 100) : 0,
+        interviewRate: countIndiv
+          ? Math.round((interviews / countIndiv) * 100)
+          : 0,
+        hireRate: countIndiv ? Math.round((offersCount / countIndiv) * 100) : 0,
       };
     });
 
-    const chartMaxVal = Math.max(...monthlyStats.map((m) => m.count), 1);
-    const totalPeriodCands = monthlyStats.reduce((sum, m) => sum + m.count, 0);
+    const chartMaxVal = Math.max(
+      ...monthlyStats.map((m) => Math.max(m.countIndiv, m.coops, m.interviews)),
+      1,
+    );
+
+    const totalPeriodCands = monthlyStats.reduce(
+      (sum, m) => sum + m.countTotal,
+      0,
+    );
     const totalPeriodInterviews = monthlyStats.reduce(
       (sum, m) => sum + m.interviews,
       0,
@@ -253,7 +295,6 @@ export default function App() {
       <ScrollView
         style={styles.page}
         showsVerticalScrollIndicator={false}
-        // ★追加: 引っ張って更新
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -264,7 +305,7 @@ export default function App() {
       >
         {/* 1. 選考パイプライン */}
         <View style={[styles.card, { marginTop: 10 }]}>
-          <Text style={styles.cardTitle}>選考パイプライン</Text>
+          <Text style={styles.cardTitle}>選考パイプライン (個人・滞留)</Text>
           {pipeline.map((step) => (
             <View
               key={step.id}
@@ -326,7 +367,9 @@ export default function App() {
             },
           ]}
         >
-          <Text style={styles.cardTitle}>期別 累計実績</Text>
+          <Text style={styles.cardTitle}>
+            期別 累計実績 ({monthsInPeriod[0]?.y}/08～)
+          </Text>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
             <View style={{ width: "45%" }}>
               <Text style={{ fontSize: 12, color: colors.muted }}>
@@ -338,7 +381,7 @@ export default function App() {
             </View>
             <View style={{ width: "45%" }}>
               <Text style={{ fontSize: 12, color: colors.muted }}>
-                面接実績
+                面接実績(個)
               </Text>
               <Text style={{ fontSize: 20, fontWeight: "bold" }}>
                 {totalPeriodInterviews}名
@@ -346,7 +389,7 @@ export default function App() {
             </View>
             <View style={{ width: "45%" }}>
               <Text style={{ fontSize: 12, color: colors.muted }}>
-                内定実績
+                内定実績(個)
               </Text>
               <Text
                 style={{
@@ -360,7 +403,7 @@ export default function App() {
             </View>
             <View style={{ width: "45%" }}>
               <Text style={{ fontSize: 12, color: colors.muted }}>
-                入社実績
+                入社実績(個)
               </Text>
               <Text
                 style={{ fontSize: 20, fontWeight: "bold", color: "#8b4513" }}
@@ -374,23 +417,23 @@ export default function App() {
         {/* 3. 現在の有効KPI */}
         <View style={styles.kpiGrid}>
           <View style={styles.kpiCard}>
-            <Text style={styles.kpiLabel}>有効応募 (滞留)</Text>
-            <Text style={styles.kpiValue}>{total}名</Text>
+            <Text style={styles.kpiLabel}>有効応募 (個人滞留)</Text>
+            <Text style={styles.kpiValue}>{totalActive}名</Text>
           </View>
           <View style={styles.kpiCard}>
-            <Text style={styles.kpiLabel}>進行中 (滞留)</Text>
+            <Text style={styles.kpiLabel}>進行中 (個人滞留)</Text>
             <Text style={[styles.kpiValue, { color: colors.primary }]}>
               {inProgress}名
             </Text>
           </View>
           <View style={styles.kpiCard}>
-            <Text style={styles.kpiLabel}>内定・入社 (滞留)</Text>
+            <Text style={styles.kpiLabel}>内定・入社 (個人滞留)</Text>
             <Text style={[styles.kpiValue, { color: colors.success }]}>
               {offers}名
             </Text>
           </View>
           <View style={styles.kpiCard}>
-            <Text style={styles.kpiLabel}>不採用・辞退 (累計)</Text>
+            <Text style={styles.kpiLabel}>不採用・辞退 (累計全件)</Text>
             <Text style={[styles.kpiValue, { color: colors.danger }]}>
               {declined}名
             </Text>
@@ -422,7 +465,7 @@ export default function App() {
                 >
                   <View
                     style={{
-                      height: `${(m.count / chartMaxVal) * 100}%`,
+                      height: `${(m.countIndiv / chartMaxVal) * 100}%`,
                       backgroundColor: "#cbd5e1",
                       width: "100%",
                       position: "absolute",
@@ -478,7 +521,7 @@ export default function App() {
                   marginRight: 4,
                 }}
               />
-              <Text style={{ fontSize: 10 }}>応募</Text>
+              <Text style={{ fontSize: 10 }}>個・応募</Text>
             </View>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
               <View
@@ -489,7 +532,7 @@ export default function App() {
                   marginRight: 4,
                 }}
               />
-              <Text style={{ fontSize: 10 }}>面接</Text>
+              <Text style={{ fontSize: 10 }}>個・面接</Text>
             </View>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
               <View
@@ -500,7 +543,7 @@ export default function App() {
                   marginRight: 4,
                 }}
               />
-              <Text style={{ fontSize: 10 }}>内定</Text>
+              <Text style={{ fontSize: 10 }}>個・内定</Text>
             </View>
           </View>
         </View>
@@ -537,7 +580,17 @@ export default function App() {
                     fontSize: 12,
                   }}
                 >
-                  応募
+                  個・応募
+                </Text>
+                <Text
+                  style={{
+                    width: 50,
+                    fontWeight: "bold",
+                    color: colors.muted,
+                    fontSize: 12,
+                  }}
+                >
+                  協力
                 </Text>
                 <Text
                   style={{
@@ -561,7 +614,7 @@ export default function App() {
                 </Text>
                 <Text
                   style={{
-                    width: 50,
+                    width: 40,
                     fontWeight: "bold",
                     color: colors.muted,
                     fontSize: 12,
@@ -571,7 +624,7 @@ export default function App() {
                 </Text>
                 <Text
                   style={{
-                    width: 50,
+                    width: 40,
                     fontWeight: "bold",
                     color: colors.muted,
                     fontSize: 12,
@@ -601,17 +654,20 @@ export default function App() {
                   }}
                 >
                   <Text style={{ width: 50, fontSize: 12 }}>{m.label}</Text>
-                  <Text style={{ width: 50, fontSize: 12 }}>{m.count}</Text>
+                  <Text style={{ width: 50, fontSize: 12 }}>
+                    {m.countIndiv}
+                  </Text>
+                  <Text style={{ width: 50, fontSize: 12 }}>{m.coops}</Text>
                   <Text style={{ width: 80, fontSize: 12 }}>
                     {m.interviews} ({m.interviewRate}%)
                   </Text>
                   <Text style={{ width: 80, fontSize: 12 }}>
                     {m.offers} ({m.hireRate}%)
                   </Text>
-                  <Text style={{ width: 50, fontSize: 12, fontWeight: "bold" }}>
+                  <Text style={{ width: 40, fontSize: 12, fontWeight: "bold" }}>
                     {m.joins}
                   </Text>
-                  <Text style={{ width: 50, fontSize: 12 }}>
+                  <Text style={{ width: 40, fontSize: 12 }}>
                     {m.declinesCount}
                   </Text>
                   <Text style={{ width: 80, fontSize: 12 }}>
@@ -621,40 +677,6 @@ export default function App() {
               ))}
             </View>
           </ScrollView>
-        </View>
-
-        {/* 6. 直近の入社予定 */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>直近の入社予定</Text>
-          {upcomingJoins.length > 0 ? (
-            upcomingJoins.map((c) => (
-              <TouchableOpacity
-                key={c.id}
-                style={styles.listItem}
-                onPress={() => setSelectedCandidate(c)}
-              >
-                <View>
-                  <Text style={styles.listName}>{c.name_kanji}</Text>
-                  <Text
-                    style={{ fontSize: 12, color: colors.muted, marginTop: 4 }}
-                  >
-                    予定日:{" "}
-                    {new Date(c.expected_join_date).toLocaleDateString("ja-JP")}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            ))
-          ) : (
-            <Text
-              style={{
-                textAlign: "center",
-                color: colors.muted,
-                marginVertical: 10,
-              }}
-            >
-              なし
-            </Text>
-          )}
         </View>
 
         <View style={{ height: 40 }} />
