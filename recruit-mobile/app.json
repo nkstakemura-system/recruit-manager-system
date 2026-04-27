@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "採用管理",
+    "slug": "recruit-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/images/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nihonkankyo.recruit"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.nihonkankyo.recruit"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "bbf21647-64af-4c13-b97d-3d02aec3e4bc"
+      }
+    }
+  }
+}
