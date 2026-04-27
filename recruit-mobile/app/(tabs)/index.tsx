@@ -14,8 +14,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-// ★本番環境（Render）のAPI URLに変更
-const BASE_URL = "http://192.168.11.18:5000";
+// ★本番環境（Render）のAPI URLに完全固定
+const BASE_URL = "https://recruit-manager-system.onrender.com";
 const API_URL = `${BASE_URL}/api/candidates`;
 const EXP_URL = `${BASE_URL}/api/expenses`;
 
