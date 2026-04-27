@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 // ★ SafeAreaView を 'react-native' から外し、新しい専用ライブラリから読み込むように修正
 import {
   View,
@@ -11,6 +11,7 @@ import {
   Platform,
   StatusBar,
   TextInput,
+  RefreshControl, // ★追加: 引っ張って更新用のコンポーネント
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -54,27 +55,43 @@ export default function App() {
   const [candidates, setCandidates] = useState([]);
   const [exps, setExps] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false); // ★追加: 更新中かどうかの判定用ステート
   const [activeTab, setActiveTab] = useState("dashboard");
   const [selectedCandidate, setSelectedCandidate] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
 
-  useEffect(() => {
-    Promise.all([
-      fetch(API_URL).then((res) => res.json()),
-      fetch(EXP_URL).then((res) => res.json()),
-    ])
-      .then(([candData, expData]) => {
-        setCandidates(candData);
-        setExps(expData);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error(err);
-        setLoading(false);
-      });
+  // ★追加: データの取得処理を共通化
+  const fetchData = useCallback(async () => {
+    try {
+      const [candRes, expRes] = await Promise.all([
+        fetch(API_URL),
+        fetch(EXP_URL),
+      ]);
+      const candData = await candRes.json();
+      const expData = await expRes.json();
+      setCandidates(candData);
+      setExps(expData);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false); // 更新完了でスピナーを消す
+    }
   }, []);
 
-  if (loading) {
+  // 初回読み込み
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // ★追加: 下に引っ張った時の処理
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchData();
+  }, [fetchData]);
+
+  // ★変更: 引っ張って更新の時は全画面ローディングを出さない
+  if (loading && !refreshing) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color={colors.primary} />
@@ -233,7 +250,18 @@ export default function App() {
     const totalPeriodJoins = monthlyStats.reduce((sum, m) => sum + m.joins, 0);
 
     return (
-      <ScrollView style={styles.page} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.page}
+        showsVerticalScrollIndicator={false}
+        // ★追加: 引っ張って更新
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.primary}
+          />
+        }
+      >
         {/* 1. 選考パイプライン */}
         <View style={[styles.card, { marginTop: 10 }]}>
           <Text style={styles.cardTitle}>選考パイプライン</Text>
@@ -672,6 +700,14 @@ export default function App() {
           data={filteredCands}
           keyExtractor={(item) => String(item.id)}
           contentContainerStyle={{ paddingBottom: 20 }}
+          // ★追加: 引っ張って更新
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.primary}
+            />
+          }
           renderItem={({ item }) => (
             <TouchableOpacity
               style={styles.card}
@@ -726,7 +762,17 @@ export default function App() {
           <View style={{ width: 60 }} />
         </View>
 
-        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+        <ScrollView
+          contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+          // ★追加: 引っ張って更新
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.primary}
+            />
+          }
+        >
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>基本情報</Text>
             <View style={styles.detailRow}>
