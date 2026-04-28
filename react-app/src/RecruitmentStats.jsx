@@ -42,9 +42,22 @@ const RecruitmentStats = () => {
     });
   }, []);
 
+  // ★ 応募経路の大分類を正確に判定する関数
+  const getSourceType = (c) => {
+    const validTypes = ["求人", "紹介", "人材紹介", "新卒"];
+    // 登録データが正規の4つのどれかならそれを採用、それ以外（未入力含む）は「その他」
+    if (validTypes.includes(c.source_type)) {
+      return c.source_type;
+    }
+    return "その他";
+  };
+
   // --- フィルター適用ロジック (useMemoで高速化) ---
   const filteredCands = useMemo(() => {
     return cands.filter((c) => {
+      // ★ 統計の基本ルール: 協力業者のデータは採用統計(歩留まり・単価等)から除外する
+      if (c.is_coop) return false;
+
       // 1. 期間フィルター (受付日で判定)
       if (dateRange.start || dateRange.end) {
         const applied = new Date(c.applied_at);
@@ -57,8 +70,8 @@ const RecruitmentStats = () => {
       // 2. 経験フィルター
       if (expFilter !== "すべて" && c.experience !== expFilter) return false;
 
-      // 3. 応募経路フィルター
-      const sType = c.source_type || "その他";
+      // 3. 応募経路フィルター (大分類で判定)
+      const sType = getSourceType(c);
       if (!sourceFilters[sType]) return false;
 
       return true;
@@ -96,25 +109,27 @@ const RecruitmentStats = () => {
   const costPerHire =
     totalJoined > 0 ? Math.round(totalExpenses / totalJoined) : 0;
 
-  // --- 離職率・定着率の計算 (※これは全体データから過去3年を固定で算出) ---
+  // --- 離職率・定着率の計算 (※過去3年間・個人応募のみで算出) ---
   const threeYearsAgo = new Date();
   threeYearsAgo.setFullYear(threeYearsAgo.getFullYear() - 3);
 
-  // 過去3年間に入社した人数
   const joinedLast3Y = cands.filter(
     (c) =>
+      !c.is_coop &&
       String(c.status) === "6" &&
       new Date(c.expected_join_date || c.applied_at) >= threeYearsAgo,
   ).length;
 
-  // 過去3年間に退職した人数（期首からいた人も含む全体離職率用）
   const retiredLast3Y = cands.filter(
-    (c) => c.is_retired && new Date(c.retirement_date) >= threeYearsAgo,
+    (c) =>
+      !c.is_coop &&
+      c.is_retired &&
+      new Date(c.retirement_date) >= threeYearsAgo,
   ).length;
 
-  // 過去3年以内に入社し、かつ既に退職した人数（早期離職・定着率用）
   const quitWithin3Y = cands.filter(
     (c) =>
+      !c.is_coop &&
       String(c.status) === "6" &&
       new Date(c.expected_join_date || c.applied_at) >= threeYearsAgo &&
       c.is_retired,
@@ -142,8 +157,9 @@ const RecruitmentStats = () => {
     新卒: "#8b5cf6",
     その他: "#64748b",
   };
+
   const sourceCounts = filteredCands.reduce((acc, c) => {
-    const s = c.source_type || "その他";
+    const s = getSourceType(c);
     acc[s] = (acc[s] || 0) + 1;
     return acc;
   }, {});
@@ -162,11 +178,16 @@ const RecruitmentStats = () => {
           })
           .join(", ");
 
+  // ★ ドリルダウン詳細集計 (大分類が選ばれた時、その中の「詳細(agent_name)」を集計する)
   const detailCounts = selectedSource
     ? filteredCands
-        .filter((c) => (c.source_type || "その他") === selectedSource)
+        .filter((c) => getSourceType(c) === selectedSource)
         .reduce((acc, c) => {
-          const name = c.agent_name || "詳細不明";
+          // 詳細名が空欄の場合は「詳細未入力」としてまとめる
+          const name =
+            c.agent_name && c.agent_name.trim() !== ""
+              ? c.agent_name
+              : "詳細未入力";
           acc[name] = (acc[name] || 0) + 1;
           return acc;
         }, {})
@@ -238,7 +259,6 @@ const RecruitmentStats = () => {
               <div
                 style={{ display: "flex", alignItems: "center", gap: "8px" }}
               >
-                {/* ★ 修正: max="9999-12-31" を付与 */}
                 <input
                   type="date"
                   max="9999-12-31"
@@ -253,7 +273,6 @@ const RecruitmentStats = () => {
                   }}
                 />
                 <span style={{ color: thm.mut }}>〜</span>
-                {/* ★ 修正: max="9999-12-31" を付与 */}
                 <input
                   type="date"
                   max="9999-12-31"
@@ -350,7 +369,6 @@ const RecruitmentStats = () => {
         </div>
 
         {/* ===== KPI カード群 ===== */}
-        {/* ★ 修正: 4列から5列へ変更し、定着率カードを配置 */}
         <div
           style={{
             display: "grid",
@@ -476,7 +494,6 @@ const RecruitmentStats = () => {
             </div>
           </div>
 
-          {/* ★ 追加: 定着率カード */}
           <div
             style={{
               background: "#f0fdfa",
