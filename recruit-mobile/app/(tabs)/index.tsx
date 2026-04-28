@@ -106,14 +106,21 @@ export default function App() {
 
   // --- ① ダッシュボード ---
   const renderDashboard = () => {
-    // 【滞留用】現在動いている応募者（削除済み・退職済みは除外）
-    const activeCands = candidates.filter(
-      (c) => !c.is_deleted && !c.is_retired,
-    );
-    // 【統計用】過去の全データ（一覧から削除しても、辞退・不採用の記録として全件残す！）
-    const allHistoricalCands = candidates;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-    // KPI: 滞留している個人応募者のみをカウント（協力業者は含まない）
+    // 【滞留】の定義：入社日が過去の人は除外
+    const activeCands = candidates.filter((c) => {
+      if (c.is_deleted || c.is_retired) return false;
+      const st = String(c.status);
+      if (st === "6" && c.expected_join_date) {
+        const joinDate = new Date(c.expected_join_date);
+        joinDate.setHours(0, 0, 0, 0);
+        return joinDate > today;
+      }
+      return ["1", "2", "3", "4", "5"].includes(st);
+    });
+
     const totalActive = activeCands.filter((c) => !c.is_coop).length;
     const inProgress = activeCands.filter(
       (c) => !c.is_coop && ["1", "2", "3", "4"].includes(String(c.status)),
@@ -121,12 +128,10 @@ export default function App() {
     const offers = activeCands.filter(
       (c) => !c.is_coop && ["5", "6"].includes(String(c.status)),
     ).length;
-    // 累計の不採用・辞退者は、削除済みデータも含めて全件からカウント！
-    const declined = allHistoricalCands.filter(
+    const declined = candidates.filter(
       (c) => !c.is_coop && String(c.status) === "9",
     ).length;
 
-    // 選考パイプライン (個人のみ)
     const pipeline = [
       {
         id: "1",
@@ -166,21 +171,13 @@ export default function App() {
       {
         id: "6",
         label: "入社前",
-        count: activeCands.filter((c) => {
-          if (c.is_coop || String(c.status) !== "6" || !c.expected_join_date)
-            return false;
-          const joinDate = new Date(c.expected_join_date);
-          joinDate.setHours(0, 0, 0, 0);
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          return joinDate >= today;
-        }).length,
+        count: activeCands.filter((c) => !c.is_coop && String(c.status) === "6")
+          .length,
         color: "#8b5cf6",
       },
     ];
     const maxPipeline = Math.max(...pipeline.map((p) => p.count), 1);
 
-    // 直近の入社予定 (個人のみ)
     const upcomingJoins = activeCands
       .filter(
         (c) =>
@@ -188,19 +185,13 @@ export default function App() {
           (String(c.status) === "5" || String(c.status) === "6") &&
           c.expected_join_date,
       )
-      .filter(
-        (c) =>
-          new Date(c.expected_join_date) >=
-          new Date(new Date().setHours(0, 0, 0, 0)),
-      )
+      .filter((c) => new Date(c.expected_join_date) >= today)
       .sort(
         (a, b) =>
           new Date(a.expected_join_date) - new Date(b.expected_join_date),
       )
       .slice(0, 3);
 
-    // 期別の月リスト作成
-    const today = new Date();
     const currentYear = today.getFullYear();
     const currentMonth = today.getMonth() + 1;
     let startYear = currentMonth >= 8 ? currentYear : currentYear - 1;
@@ -218,35 +209,41 @@ export default function App() {
       }
     }
 
-    // ★統計処理: 「削除済み」のデータも含めて集計する
     const monthlyStats = monthsInPeriod.map((mon) => {
-      // is_deleted で弾かない！
-      const monthCands = allHistoricalCands.filter((c) => {
+      const appCands = candidates.filter((c) => {
         if (!c.applied_at) return false;
         const d = new Date(c.applied_at);
         return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
       });
+      const intCands = candidates.filter((c) => {
+        if (!c.interview_1_date) return false;
+        const d = new Date(c.interview_1_date);
+        return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
+      });
+      const offerCands = candidates.filter((c) => {
+        if (!["5", "6"].includes(String(c.status)) || !c.expected_join_date)
+          return false;
+        const d = new Date(c.expected_join_date);
+        return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
+      });
+      const joinCands = candidates.filter((c) => {
+        if (String(c.status) !== "6" || !c.expected_join_date) return false;
+        const d = new Date(c.expected_join_date);
+        return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
+      });
 
-      const countTotal = monthCands.length;
-      const coops = monthCands.filter((c) => c.is_coop).length;
+      const countTotal = appCands.length;
+      const coops = appCands.filter((c) => c.is_coop).length;
       const countIndiv = countTotal - coops;
-
-      // 個人の実績のみ抽出
-      const interviews = monthCands.filter(
-        (c) =>
-          !c.is_coop &&
-          (c.interview_1_date ||
-            ["3", "4", "5", "6"].includes(String(c.status))),
-      ).length;
-      const offersCount = monthCands.filter(
-        (c) => !c.is_coop && ["5", "6"].includes(String(c.status)),
-      ).length;
-      const joins = monthCands.filter(
-        (c) => !c.is_coop && String(c.status) === "6",
-      ).length;
-      const declinesCount = monthCands.filter(
-        (c) => !c.is_coop && String(c.status) === "9",
-      ).length;
+      const interviews = intCands.filter((c) => !c.is_coop).length;
+      const offersCount = offerCands.filter((c) => !c.is_coop).length;
+      const joins = joinCands.filter((c) => !c.is_coop).length;
+      const declinesCount = candidates.filter((c) => {
+        if (String(c.status) !== "9" || c.is_coop || !c.applied_at)
+          return false;
+        const d = new Date(c.applied_at);
+        return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
+      }).length;
 
       const expense = exps
         .filter((e) => {
@@ -303,7 +300,6 @@ export default function App() {
           />
         }
       >
-        {/* 1. 選考パイプライン */}
         <View style={[styles.card, { marginTop: 10 }]}>
           <Text style={styles.cardTitle}>選考パイプライン (個人・滞留)</Text>
           {pipeline.map((step) => (
@@ -356,7 +352,6 @@ export default function App() {
           ))}
         </View>
 
-        {/* 2. 累計実績 */}
         <View
           style={[
             styles.card,
@@ -414,7 +409,6 @@ export default function App() {
           </View>
         </View>
 
-        {/* 3. 現在の有効KPI */}
         <View style={styles.kpiGrid}>
           <View style={styles.kpiCard}>
             <Text style={styles.kpiLabel}>有効応募 (個人滞留)</Text>
@@ -440,7 +434,6 @@ export default function App() {
           </View>
         </View>
 
-        {/* 4. 月別実績推移 (グラフ) */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>月別実績推移</Text>
           <ScrollView
@@ -548,7 +541,6 @@ export default function App() {
           </View>
         </View>
 
-        {/* 5. 月別詳細実績 (テーブル) */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>月別詳細実績</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>

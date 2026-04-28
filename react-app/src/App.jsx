@@ -3706,13 +3706,21 @@ const Dashboard = () => {
 
   if (loading) return <div style={s.main}>読み込み中...</div>;
 
-  // 【滞留用】有効なデータのみ（削除・退職済みは除外）
-  const activeCands = cands.filter((c) => !c.is_deleted && !c.is_retired);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
-  // 【統計用】過去の全データ（一覧から削除しても、辞退・不採用の記録として全件残す！）
-  const allHistoricalCands = cands;
+  // 【滞留用】有効なデータのみ。入社予定日が過去の人は滞留から外す
+  const activeCands = cands.filter((c) => {
+    if (c.is_deleted || c.is_retired) return false;
+    const st = String(c.status);
+    if (st === "6" && c.expected_join_date) {
+      const joinDate = new Date(c.expected_join_date);
+      joinDate.setHours(0, 0, 0, 0);
+      return joinDate > today; // 未来ならまだ滞留（入社前）
+    }
+    return ["1", "2", "3", "4", "5"].includes(st);
+  });
 
-  // KPI: 滞留している個人応募者のみをカウント（協力業者は除外して数字を正確に）
   const totalActive = activeCands.filter((c) => !c.is_coop).length;
   const inProgress = activeCands.filter(
     (c) => !c.is_coop && ["1", "2", "3", "4"].includes(String(c.status)),
@@ -3722,11 +3730,11 @@ const Dashboard = () => {
   ).length;
 
   // 累計の不採用・辞退者は、削除済みデータも含めて全件からカウント！
-  const declined = allHistoricalCands.filter(
+  const declined = cands.filter(
     (c) => !c.is_coop && String(c.status) === "9",
   ).length;
 
-  // 選考パイプライン（個人応募のみを対象とする）
+  // 選考パイプライン（個人応募のみ・滞留状況）
   const pipeline = [
     {
       id: "1",
@@ -3766,15 +3774,8 @@ const Dashboard = () => {
     {
       id: "6",
       label: "入社前",
-      count: activeCands.filter((c) => {
-        if (c.is_coop || String(c.status) !== "6" || !c.expected_join_date)
-          return false;
-        const joinDate = new Date(c.expected_join_date);
-        joinDate.setHours(0, 0, 0, 0);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        return joinDate >= today;
-      }).length,
+      count: activeCands.filter((c) => !c.is_coop && String(c.status) === "6")
+        .length,
       color: "#8b5cf6",
     },
   ];
@@ -3788,44 +3789,57 @@ const Dashboard = () => {
         (String(c.status) === "5" || String(c.status) === "6") &&
         c.expected_join_date,
     )
-    .filter(
-      (c) =>
-        new Date(c.expected_join_date) >=
-        new Date(new Date().setHours(0, 0, 0, 0)),
-    )
+    .filter((c) => new Date(c.expected_join_date) >= today)
     .sort(
       (a, b) => new Date(a.expected_join_date) - new Date(b.expected_join_date),
     )
     .slice(0, 3);
 
-  // ★統計処理: 「削除済み」のデータも含めて集計する
+  // ★統計処理: イベント発生ベースで集計する（削除データも含む）
   const monthlyStats = monthsInPeriod.map((mon) => {
-    // is_deletedで弾かず、allHistoricalCandsを使用
-    const monthCands = allHistoricalCands.filter((c) => {
+    // 1. 応募数（その月にapplied_atがある）
+    const appCands = cands.filter((c) => {
       if (!c.applied_at) return false;
       const d = new Date(c.applied_at);
       return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
     });
 
-    const countTotal = monthCands.length; // 全体（個人＋協力）
-    const coops = monthCands.filter((c) => c.is_coop).length; // 協力業者
-    const countIndiv = countTotal - coops; // 個人応募
+    // 2. 面接数（その月にinterview_1_dateがある）
+    const intCands = cands.filter((c) => {
+      if (!c.interview_1_date) return false;
+      const d = new Date(c.interview_1_date);
+      return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
+    });
 
-    // 以下、成功メトリクスは「個人」のみを対象
-    const interviews = monthCands.filter(
-      (c) =>
-        !c.is_coop &&
-        (c.interview_1_date || ["3", "4", "5", "6"].includes(String(c.status))),
-    ).length;
-    const offers = monthCands.filter(
-      (c) => !c.is_coop && ["5", "6"].includes(String(c.status)),
-    ).length;
-    const joins = monthCands.filter(
-      (c) => !c.is_coop && String(c.status) === "6",
-    ).length;
-    const declinesCount = monthCands.filter(
-      (c) => !c.is_coop && String(c.status) === "9",
-    ).length;
+    // 3. 内定数（ステータス5以上で、その月にexpected_join_dateがある）
+    const offerCands = cands.filter((c) => {
+      if (!["5", "6"].includes(String(c.status)) || !c.expected_join_date)
+        return false;
+      const d = new Date(c.expected_join_date);
+      return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
+    });
+
+    // 4. 入社数（ステータス6で、その月にexpected_join_dateがある）
+    const joinCands = cands.filter((c) => {
+      if (String(c.status) !== "6" || !c.expected_join_date) return false;
+      const d = new Date(c.expected_join_date);
+      return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
+    });
+
+    const countTotal = appCands.length;
+    const coops = appCands.filter((c) => c.is_coop).length;
+    const countIndiv = countTotal - coops;
+
+    const interviews = intCands.filter((c) => !c.is_coop).length;
+    const offers = offerCands.filter((c) => !c.is_coop).length;
+    const joins = joinCands.filter((c) => !c.is_coop).length;
+
+    // 辞退数は日付データがないため、応募月ベースの参考値として算出
+    const declinesCount = cands.filter((c) => {
+      if (String(c.status) !== "9" || c.is_coop || !c.applied_at) return false;
+      const d = new Date(c.applied_at);
+      return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
+    }).length;
 
     const expense = exps
       .filter((e) => {
@@ -3865,7 +3879,6 @@ const Dashboard = () => {
   const totalPeriodOffers = monthlyStats.reduce((sum, m) => sum + m.offers, 0);
   const totalPeriodJoins = monthlyStats.reduce((sum, m) => sum + m.joins, 0);
 
-  // 率の分母は「個人応募数」とする
   const periodInterviewRate = totalPeriodIndivs
     ? Math.round((totalPeriodInterviews / totalPeriodIndivs) * 100)
     : 0;
@@ -3880,7 +3893,6 @@ const Dashboard = () => {
   const costPerHire =
     totalPeriodOffers > 0 ? Math.round(totalExpPeriod / totalPeriodOffers) : 0;
 
-  // グラフの最大値（個人＋協力、または面接数などの最大をとる）
   const chartMaxVal = Math.max(
     ...monthlyStats.map((m) => Math.max(m.countIndiv, m.coops, m.interviews)),
     1,
