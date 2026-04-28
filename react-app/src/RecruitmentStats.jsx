@@ -42,13 +42,28 @@ const RecruitmentStats = () => {
     });
   }, []);
 
-  // ★ 応募経路の大分類を正確に判定する関数
+  // ★ 応募経路の大分類を正確に判定する関数 (過去データの救済ロジック付き)
   const getSourceType = (c) => {
-    const validTypes = ["求人", "紹介", "人材紹介", "新卒"];
-    // 登録データが正規の4つのどれかならそれを採用、それ以外（未入力含む）は「その他」
-    if (validTypes.includes(c.source_type)) {
-      return c.source_type;
+    const st = (c.source_type || "").trim();
+    // 1. ラジオボタンで選ばれた正規の値があれば、それを優先する
+    if (["求人", "紹介", "人材紹介", "新卒", "その他"].includes(st)) {
+      return st;
     }
+
+    // 2. 過去データ（ラジオボタンが無かった時代のデータ）の自動振り分け
+    const agent = (c.agent_name || "").toLowerCase();
+    if (
+      /indeed|engage|エンゲージ|タウンワーク|マイナビ|doda|ハローワーク|求人/i.test(
+        agent,
+      )
+    )
+      return "求人";
+    if (/プレックス|エージェント|リクルート|人材紹介/i.test(agent))
+      return "人材紹介";
+    if (/紹介|知人|社員/i.test(agent)) return "紹介";
+    if (/学校|大学|専門|新卒/i.test(agent)) return "新卒";
+
+    // それでも分類できないものは「その他」
     return "その他";
   };
 
@@ -219,8 +234,19 @@ const RecruitmentStats = () => {
   });
 
   return (
-    <div style={{ padding: "30px", background: thm.bg, minHeight: "100vh" }}>
-      <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
+    <div
+      style={{
+        flex: 1,
+        overflowY: "auto",
+        padding: "40px",
+        background: thm.bg,
+        boxSizing: "border-box",
+        height: "100vh",
+      }}
+    >
+      <div
+        style={{ maxWidth: "1200px", margin: "0 auto", paddingBottom: "60px" }}
+      >
         <h2
           style={{
             fontSize: "28px",
