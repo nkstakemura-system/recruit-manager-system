@@ -44,13 +44,16 @@ app.post("/api/candidates", async (req, res) => {
     email,
     status,
     primary_contact,
-    applied_at, // フロントから届く 'YYYY-MM-DD' 形式
+    applied_at,
     is_coop,
     company_name,
     introducer,
     internal_contact,
     desired_dept,
     subcontract_status,
+    source_type, // ★追加
+    agent_name, // ★追加
+    introducer_fee, // ★追加
   } = req.body;
 
   try {
@@ -58,9 +61,10 @@ app.post("/api/candidates", async (req, res) => {
       `INSERT INTO candidates (
         name_kanji, name_kana, age, birth_year, experience, 
         tel, email, status, primary_contact, applied_at,
-        is_coop, company_name, introducer, internal_contact, desired_dept, subcontract_status
+        is_coop, company_name, introducer, internal_contact, desired_dept, subcontract_status,
+        source_type, agent_name, introducer_fee
       ) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *`,
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *`,
       [
         name_kanji,
         name_kana,
@@ -71,18 +75,21 @@ app.post("/api/candidates", async (req, res) => {
         JSON.stringify(email || []),
         status || 1,
         primary_contact,
-        applied_at || new Date(), // ★ここで空文字やundefinedを許容せず値を確実に渡す
+        applied_at || new Date(),
         is_coop || false,
         company_name || null,
         introducer || null,
         internal_contact || null,
         desired_dept || null,
         subcontract_status || null,
+        source_type || null, // $17
+        agent_name || null, // $18
+        introducer_fee || null, // $19
       ],
     );
     res.json(result.rows[0]);
   } catch (err) {
-    console.error("【POST Error】:", err); // ★エラー内容を詳細に吐き出すように変更
+    console.error("【POST Error】:", err);
     res.status(500).send("Server Error");
   }
 });
@@ -103,7 +110,8 @@ app.put("/api/candidates/:id", async (req, res) => {
         work_history=$39, licenses=$40, family=$41, commute_time=$42, expected_join_date=$43,
         birth_date=$44, is_retired=$45, retirement_date=$46, contact_history=$47, interview_2_attendee=$48,
         applied_at=$49,
-        is_coop=$50, company_name=$51, introducer=$52, internal_contact=$53, desired_dept=$54, subcontract_status=$55
+        is_coop=$50, company_name=$51, introducer=$52, internal_contact=$53, desired_dept=$54, subcontract_status=$55,
+        source_type=$57, introducer_fee=$58
       WHERE id = $56`,
       [
         b.name_kanji,
@@ -162,6 +170,8 @@ app.put("/api/candidates/:id", async (req, res) => {
         b.desired_dept, // $54
         b.subcontract_status, // $55
         req.params.id, // $56
+        b.source_type || null, // $57 ★追加
+        b.introducer_fee || null, // $58 ★追加
       ],
     );
     res.json({ message: "更新完了" });
@@ -182,7 +192,6 @@ app.delete("/api/candidates/:id", async (req, res) => {
   }
 });
 
-// ★ 追加：重複データなどをDBから完全に消去する物理削除API
 app.delete("/api/candidates/:id/physical", async (req, res) => {
   try {
     await db.query("DELETE FROM candidates WHERE id = $1", [req.params.id]);
