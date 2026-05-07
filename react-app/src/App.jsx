@@ -464,7 +464,7 @@ const CandidateDetail = () => {
   });
 
   useEffect(() => {
-    fetch(`http://192.168.11.18:5000/api/candidates/${id}`)
+    fetch(`/api/candidates/${id}`)
       .then((res) => res.json())
       .then((d) => {
         setCand(d);
@@ -552,7 +552,7 @@ const CandidateDetail = () => {
         const expDateStr = joinDate.toISOString().split("T")[0];
 
         try {
-          await fetch("http://192.168.11.18:5000/api/expenses", {
+          await fetch("/api/expenses", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -582,14 +582,11 @@ const CandidateDetail = () => {
         family: fam,
         ...currentOverrides, // ★引数で上書きされたデータ（ステータス9等）を適用
       };
-      const res = await fetch(
-        `http://192.168.11.18:5000/api/candidates/${id}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        },
-      );
+      const res = await fetch(`/api/candidates/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
       if (res.ok) {
         alert("データを保存・更新しました");
         setShowRetireInput(false);
@@ -2360,14 +2357,11 @@ const ProgressModal = ({ cand, onClose, onUpdate }) => {
         payload.status = "9";
       }
 
-      const res = await fetch(
-        `http://192.168.11.18:5000/api/candidates/${cand.id}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        },
-      );
+      const res = await fetch(`/api/candidates/${cand.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
       if (res.ok) {
         onUpdate();
@@ -2832,7 +2826,7 @@ const CandidateList = () => {
   const nav = useNavigate();
 
   const fetchC = () => {
-    fetch("http://192.168.11.18:5000/api/candidates")
+    fetch("/api/candidates")
       .then((r) => r.json())
       .then((d) => {
         setCands(d);
@@ -2844,7 +2838,7 @@ const CandidateList = () => {
   const hDel = async (id) => {
     if (!window.confirm("一覧から削除（非表示に）しますか？")) return;
     try {
-      await fetch(`http://192.168.11.18:5000/api/candidates/${id}`, {
+      await fetch(`/api/candidates/${id}`, {
         method: "DELETE",
       });
       fetchC();
@@ -2854,7 +2848,7 @@ const CandidateList = () => {
   const hRestore = async (id) => {
     if (!window.confirm("このデータを復元しますか？")) return;
     try {
-      await fetch(`http://192.168.11.18:5000/api/candidates/${id}/restore`, {
+      await fetch(`/api/candidates/${id}/restore`, {
         method: "PATCH",
       });
       fetchC();
@@ -2870,7 +2864,7 @@ const CandidateList = () => {
     )
       return;
     try {
-      await fetch(`http://192.168.11.18:5000/api/candidates/${id}/physical`, {
+      await fetch(`/api/candidates/${id}/physical`, {
         method: "DELETE",
       });
       fetchC();
@@ -3311,7 +3305,7 @@ const RegistrationForm = () => {
     }
 
     try {
-      const res = await fetch("http://192.168.11.18:5000/api/candidates", {
+      const res = await fetch("/api/candidates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -3695,10 +3689,8 @@ const Dashboard = () => {
 
   useEffect(() => {
     Promise.all([
-      fetch("http://192.168.11.18:5000/api/candidates").then((res) =>
-        res.json(),
-      ),
-      fetch("http://192.168.11.18:5000/api/expenses").then((res) => res.json()),
+      fetch("/api/candidates").then((res) => res.json()),
+      fetch("/api/expenses").then((res) => res.json()),
     ])
       .then(([candData, expData]) => {
         setCands(candData);
@@ -4725,7 +4717,7 @@ const ExpensePage = () => {
   });
 
   const fetchExps = () => {
-    fetch("http://192.168.11.18:5000/api/expenses")
+    fetch("/api/expenses")
       .then((res) => res.json())
       .then((data) => setExps(data))
       .catch((err) => console.error("経費取得エラー:", err));
@@ -4752,7 +4744,7 @@ const ExpensePage = () => {
       return;
     }
     try {
-      const res = await fetch("http://192.168.11.18:5000/api/expenses", {
+      const res = await fetch("/api/expenses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -4789,7 +4781,7 @@ const ExpensePage = () => {
       return;
     }
     try {
-      const res = await fetch(`http://192.168.11.18:5000/api/expenses/${id}`, {
+      const res = await fetch(`/api/expenses/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -4812,7 +4804,7 @@ const ExpensePage = () => {
   const handleDelete = async (id) => {
     if (!window.confirm("削除しますか？")) return;
     try {
-      await fetch(`http://192.168.11.18:5000/api/expenses/${id}`, {
+      await fetch(`/api/expenses/${id}`, {
         method: "DELETE",
       });
       fetchExps();

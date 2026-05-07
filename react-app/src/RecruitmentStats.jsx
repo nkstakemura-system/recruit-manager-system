@@ -33,8 +33,8 @@ const RecruitmentStats = () => {
 
   useEffect(() => {
     Promise.all([
-      fetch("http://192.168.11.18:5000/api/candidates").then((r) => r.json()),
-      fetch("http://192.168.11.18:5000/api/expenses").then((r) => r.json()),
+      fetch("/api/candidates").then((r) => r.json()),
+      fetch("/api/expenses").then((r) => r.json()),
     ]).then(([cData, eData]) => {
       setCands(cData);
       setExps(eData);
