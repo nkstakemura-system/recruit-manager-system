@@ -32,9 +32,10 @@ const RecruitmentStats = () => {
   const [baseHeadcount, setBaseHeadcount] = useState(50); // 期首人数の仮置き
 
   useEffect(() => {
+    // ★修正：ローカルIPを消して相対パスに変更しました
     Promise.all([
-      fetch("http://192.168.11.18:5000/api/candidates").then((r) => r.json()),
-      fetch("http://192.168.11.18:5000/api/expenses").then((r) => r.json()),
+      fetch("/api/candidates").then((r) => r.json()),
+      fetch("/api/expenses").then((r) => r.json()),
     ]).then(([cData, eData]) => {
       setCands(cData);
       setExps(eData);
