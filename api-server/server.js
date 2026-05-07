@@ -182,6 +182,17 @@ app.delete("/api/candidates/:id", async (req, res) => {
   }
 });
 
+// ★ 追加：重複データなどをDBから完全に消去する物理削除API
+app.delete("/api/candidates/:id/physical", async (req, res) => {
+  try {
+    await db.query("DELETE FROM candidates WHERE id = $1", [req.params.id]);
+    res.json({ message: "完全に削除しました" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Server Error");
+  }
+});
+
 app.patch("/api/candidates/:id/restore", async (req, res) => {
   try {
     await db.query(

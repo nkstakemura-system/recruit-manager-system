@@ -2861,6 +2861,22 @@ const CandidateList = () => {
     } catch (e) {}
   };
 
+  // ★追加：完全消去機能
+  const hHardDel = async (id) => {
+    if (
+      !window.confirm(
+        "【警告】データベースから完全に消去します。\n統計からも消滅し、二度と復元できません。本当に完全消去しますか？",
+      )
+    )
+      return;
+    try {
+      await fetch(`http://192.168.11.18:5000/api/candidates/${id}/physical`, {
+        method: "DELETE",
+      });
+      fetchC();
+    } catch (e) {}
+  };
+
   const reqSort = (k) =>
     setSort({
       key: k,
@@ -2966,7 +2982,7 @@ const CandidateList = () => {
                 }}
               >
                 {[
-                  { id: "all", label: "すべて" }, // ★追加
+                  { id: "all", label: "すべて" },
                   { id: "indiv", label: "個人応募" },
                   { id: "coop", label: "協力業者" },
                   { id: "archive", label: "退職・削除済" },
@@ -3067,12 +3083,11 @@ const CandidateList = () => {
                       : null;
                     if (retDate) retDate.setHours(0, 0, 0, 0);
 
-                    const rowBg =
-                      viewMode === "archive"
+                    const rowBg = c.is_coop
+                      ? "#f0f9ff"
+                      : viewMode === "archive"
                         ? "#f8fafc"
-                        : c.is_coop
-                          ? "#f0f9ff"
-                          : "transparent";
+                        : "transparent";
 
                     return (
                       <tr
@@ -3116,7 +3131,6 @@ const CandidateList = () => {
                           >
                             {c.name_kana}
                           </div>
-                          {/* 協力業者(is_coop)以外の場合のみ「面接」ボタンを表示 */}
                           {!c.is_coop && (
                             <button
                               onClick={() =>
@@ -3165,16 +3179,35 @@ const CandidateList = () => {
                         </td>
                         <td style={s.td}>
                           {viewMode === "archive" ? (
-                            <button
-                              onClick={() => hRestore(c.id)}
+                            <div
                               style={{
-                                ...s.actBtn,
-                                color: thm.pri,
-                                borderColor: thm.pri,
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: "8px",
                               }}
                             >
-                              復元
-                            </button>
+                              <button
+                                onClick={() => hRestore(c.id)}
+                                style={{
+                                  ...s.actBtn,
+                                  color: thm.pri,
+                                  borderColor: thm.pri,
+                                }}
+                              >
+                                復元
+                              </button>
+                              <button
+                                onClick={() => hHardDel(c.id)}
+                                style={{
+                                  ...s.actBtn,
+                                  color: "#fff",
+                                  background: thm.dng,
+                                  borderColor: thm.dng,
+                                }}
+                              >
+                                完全消去
+                              </button>
+                            </div>
                           ) : (
                             <button
                               onClick={() => hDel(c.id)}
