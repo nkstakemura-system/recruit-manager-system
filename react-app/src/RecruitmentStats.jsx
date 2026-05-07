@@ -33,8 +33,8 @@ const RecruitmentStats = () => {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/candidates").then((r) => r.json()),
-      fetch("/api/expenses").then((r) => r.json()),
+      fetch("http://192.168.11.18:5000/api/candidates").then((r) => r.json()),
+      fetch("http://192.168.11.18:5000/api/expenses").then((r) => r.json()),
     ]).then(([cData, eData]) => {
       setCands(cData);
       setExps(eData);
@@ -42,28 +42,13 @@ const RecruitmentStats = () => {
     });
   }, []);
 
-  // ★ 応募経路の大分類を正確に判定する関数 (過去データの救済ロジック付き)
+  // ★ 応募経路の大分類判定 (推測ロジックを全廃止し、DBの値だけを信じる)
   const getSourceType = (c) => {
     const st = (c.source_type || "").trim();
-    // 1. ラジオボタンで選ばれた正規の値があれば、それを優先する
     if (["求人", "紹介", "人材紹介", "新卒", "その他"].includes(st)) {
       return st;
     }
-
-    // 2. 過去データ（ラジオボタンが無かった時代のデータ）の自動振り分け
-    const agent = (c.agent_name || "").toLowerCase();
-    if (
-      /indeed|engage|エンゲージ|タウンワーク|マイナビ|doda|ハローワーク|求人/i.test(
-        agent,
-      )
-    )
-      return "求人";
-    if (/プレックス|エージェント|リクルート|人材紹介/i.test(agent))
-      return "人材紹介";
-    if (/紹介|知人|社員/i.test(agent)) return "紹介";
-    if (/学校|大学|専門|新卒/i.test(agent)) return "新卒";
-
-    // それでも分類できないものは「その他」
+    // DBに値がない（過去データ等）、または想定外の値なら「その他」
     return "その他";
   };
 
@@ -85,7 +70,7 @@ const RecruitmentStats = () => {
       // 2. 経験フィルター
       if (expFilter !== "すべて" && c.experience !== expFilter) return false;
 
-      // 3. 応募経路フィルター (大分類で判定)
+      // 3. 応募経路フィルター (ラジオボタンの値で判定)
       const sType = getSourceType(c);
       if (!sourceFilters[sType]) return false;
 

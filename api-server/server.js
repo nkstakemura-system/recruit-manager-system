@@ -51,8 +51,8 @@ app.post("/api/candidates", async (req, res) => {
     internal_contact,
     desired_dept,
     subcontract_status,
-    source_type, // ★追加
-    agent_name, // ★追加
+    source_type,
+    agent_name,
     introducer_fee, // ★追加
   } = req.body;
 
@@ -82,9 +82,9 @@ app.post("/api/candidates", async (req, res) => {
         internal_contact || null,
         desired_dept || null,
         subcontract_status || null,
-        source_type || null, // $17
-        agent_name || null, // $18
-        introducer_fee || null, // $19
+        source_type || null,
+        agent_name || null,
+        introducer_fee || null, // $17, $18, $19
       ],
     );
     res.json(result.rows[0]);
@@ -109,8 +109,8 @@ app.put("/api/candidates/:id", async (req, res) => {
         emerg_tel=$34, emerg_name=$35, emerg_relation=$36, education=$37, graduation_year=$38, 
         work_history=$39, licenses=$40, family=$41, commute_time=$42, expected_join_date=$43,
         birth_date=$44, is_retired=$45, retirement_date=$46, contact_history=$47, interview_2_attendee=$48,
-        applied_at=$49,
-        is_coop=$50, company_name=$51, introducer=$52, internal_contact=$53, desired_dept=$54, subcontract_status=$55,
+        applied_at=$49, is_coop=$50, company_name=$51, introducer=$52, internal_contact=$53, 
+        desired_dept=$54, subcontract_status=$55,
         source_type=$57, introducer_fee=$58
       WHERE id = $56`,
       [
@@ -163,15 +163,15 @@ app.put("/api/candidates/:id", async (req, res) => {
         JSON.stringify(b.contact_history || []),
         b.interview_2_attendee,
         b.applied_at,
-        b.is_coop || false, // $50
-        b.company_name, // $51
-        b.introducer, // $52
-        b.internal_contact, // $53
-        b.desired_dept, // $54
-        b.subcontract_status, // $55
+        b.is_coop || false,
+        b.company_name,
+        b.introducer,
+        b.internal_contact,
+        b.desired_dept,
+        b.subcontract_status,
         req.params.id, // $56
-        b.source_type || null, // $57 ★追加
-        b.introducer_fee || null, // $58 ★追加
+        b.source_type || null, // $57 ★重要
+        b.introducer_fee || null, // $58 ★重要
       ],
     );
     res.json({ message: "更新完了" });
@@ -181,6 +181,7 @@ app.put("/api/candidates/:id", async (req, res) => {
   }
 });
 
+// 論理削除（非表示）
 app.delete("/api/candidates/:id", async (req, res) => {
   try {
     await db.query("UPDATE candidates SET is_deleted = true WHERE id = $1", [
@@ -192,6 +193,7 @@ app.delete("/api/candidates/:id", async (req, res) => {
   }
 });
 
+// ★追加：物理削除（完全抹消）
 app.delete("/api/candidates/:id/physical", async (req, res) => {
   try {
     await db.query("DELETE FROM candidates WHERE id = $1", [req.params.id]);
@@ -250,7 +252,6 @@ app.delete("/api/expenses/:id", async (req, res) => {
   }
 });
 
-// --- 経費の更新 (PUT) ---
 app.put("/api/expenses/:id", async (req, res) => {
   const { payee, amount, expense_date } = req.body;
   try {
@@ -265,7 +266,6 @@ app.put("/api/expenses/:id", async (req, res) => {
   }
 });
 
-// ★ ここから追加：Reactの本番画面を一緒に配信する設定 ★
 const path = require("path");
 app.use(express.static(path.join(__dirname, "../react-app/dist")));
 app.get("*", (req, res) => {
