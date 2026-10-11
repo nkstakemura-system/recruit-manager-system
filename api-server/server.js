@@ -1,13 +1,40 @@
 const express = require("express");
-const cors = require("cors");
+const { createAuth } = require("./auth");
 const db = require("./db");
 require("dotenv").config();
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-const PORT = process.env.PORT || 5000;
 
+app.use(express.json({ limit: "1mb" }));
+const auth = createAuth();
+auth.install(app);
+const PORT = process.env.PORT || 5000;
+const optionalText = value => typeof value === "string" && value.trim() ? value.trim() : null;
+
+// Meeting tokens are accepted only by this read-only endpoint.
+app.get("/api/meeting/hr-summary", auth.requireMeeting, async (req, res) => {
+  try {
+    const { calendarDate, buildHrSummary } = await import("../shared/hrSummary.mjs");
+    const asOf = calendarDate();
+    const result = await db.query(
+      `SELECT id, name_kanji, status,
+        to_char(expected_join_date, 'YYYY-MM-DD') AS expected_join_date,
+        planned_department, job_title, employment_type
+      FROM candidates
+      WHERE COALESCE(is_coop, false) = false
+        AND COALESCE(is_deleted, false) = false
+        AND COALESCE(is_retired, false) = false
+        AND (retirement_date IS NULL OR retirement_date > $1::date)`,
+      [asOf],
+    );
+    res.json(buildHrSummary(result.rows, asOf));
+  } catch (err) {
+    console.error("Database operation failed");
+    res.status(500).send("Server Error");
+  }
+});
+// Protect every remaining API, including future routes and physical deletion.
+app.use("/api", auth.requireSession);
 // --- 応募者関連 API ---
 app.get("/api/candidates", async (req, res) => {
   try {
@@ -16,7 +43,7 @@ app.get("/api/candidates", async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
-    console.error(err);
+    console.error("Database operation failed");
     res.status(500).send("Server Error");
   }
 });
@@ -54,6 +81,9 @@ app.post("/api/candidates", async (req, res) => {
     source_type,
     agent_name,
     introducer_fee, // ★追加
+    job_title,
+    planned_department,
+    employment_type,
   } = req.body;
 
   try {
@@ -62,9 +92,9 @@ app.post("/api/candidates", async (req, res) => {
         name_kanji, name_kana, age, birth_year, experience, 
         tel, email, status, primary_contact, applied_at,
         is_coop, company_name, introducer, internal_contact, desired_dept, subcontract_status,
-        source_type, agent_name, introducer_fee
+        source_type, agent_name, introducer_fee, job_title, planned_department, employment_type
       ) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *`,
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING *`,
       [
         name_kanji,
         name_kana,
@@ -85,11 +115,14 @@ app.post("/api/candidates", async (req, res) => {
         source_type || null,
         agent_name || null,
         introducer_fee || null, // $17, $18, $19
+        optionalText(job_title),
+        optionalText(planned_department),
+        optionalText(employment_type),
       ],
     );
     res.json(result.rows[0]);
   } catch (err) {
-    console.error("【POST Error】:", err);
+    console.error("Database operation failed");
     res.status(500).send("Server Error");
   }
 });
@@ -111,7 +144,10 @@ app.put("/api/candidates/:id", async (req, res) => {
         birth_date=$44, is_retired=$45, retirement_date=$46, contact_history=$47, interview_2_attendee=$48,
         applied_at=$49, is_coop=$50, company_name=$51, introducer=$52, internal_contact=$53, 
         desired_dept=$54, subcontract_status=$55,
-        source_type=$57, introducer_fee=$58
+        source_type=$57, introducer_fee=$58,
+        job_title=CASE WHEN $59::boolean THEN $60::text ELSE job_title END,
+        planned_department=CASE WHEN $61::boolean THEN $62::text ELSE planned_department END,
+        employment_type=CASE WHEN $63::boolean THEN $64::text ELSE employment_type END
       WHERE id = $56`,
       [
         b.name_kanji,
@@ -172,11 +208,14 @@ app.put("/api/candidates/:id", async (req, res) => {
         req.params.id, // $56
         b.source_type || null, // $57 ★重要
         b.introducer_fee || null, // $58 ★重要
+        Object.prototype.hasOwnProperty.call(b, "job_title"), optionalText(b.job_title),
+        Object.prototype.hasOwnProperty.call(b, "planned_department"), optionalText(b.planned_department),
+        Object.prototype.hasOwnProperty.call(b, "employment_type"), optionalText(b.employment_type),
       ],
     );
     res.json({ message: "更新完了" });
   } catch (err) {
-    console.error(err);
+    console.error("Database operation failed");
     res.status(500).send("Server Error");
   }
 });
@@ -199,7 +238,7 @@ app.delete("/api/candidates/:id/physical", async (req, res) => {
     await db.query("DELETE FROM candidates WHERE id = $1", [req.params.id]);
     res.json({ message: "完全に削除しました" });
   } catch (err) {
-    console.error(err);
+    console.error("Database operation failed");
     res.status(500).send("Server Error");
   }
 });
@@ -261,11 +300,12 @@ app.put("/api/expenses/:id", async (req, res) => {
     );
     res.json(result.rows[0]);
   } catch (err) {
-    console.error(err);
+    console.error("Database operation failed");
     res.status(500).send("Server Error");
   }
 });
 
+app.use("/api", (req, res) => res.status(404).json({ error: "Not found" }));
 const path = require("path");
 app.use(express.static(path.join(__dirname, "../react-app/dist")));
 app.get("*", (req, res) => {

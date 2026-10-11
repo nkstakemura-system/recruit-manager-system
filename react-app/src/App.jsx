@@ -1,4 +1,7 @@
+import Auth from "./Auth";
+import { apiFetch } from "./api";
 import React, { useState, useEffect } from "react";
+import { getPlannedJoiners, calendarDate } from "../../shared/hrSummary.mjs";
 import {
   BrowserRouter as Router,
   Routes,
@@ -435,6 +438,17 @@ const ProgressStatus = ({ candidate, s, thm }) => {
   );
 };
 
+const EmploymentFields = ({ value, onChange }) => (
+  <div style={{ ...s.flexRow, flexWrap: "wrap", gap: "12px" }}>
+    {[["job_title", "職種"], ["planned_department", "配属予定部署"], ["employment_type", "雇用形態"]].map(([name, label]) => (
+      <label key={name} style={{ ...s.lbl, flex: "1 1 150px", marginBottom: 0 }}>
+        {label}
+        <input name={name} value={value[name] || ""} onChange={onChange}
+          style={{ ...s.inp, marginTop: "6px" }} />
+      </label>
+    ))}
+  </div>
+);
 // --- 詳細・選考入力画面 ---
 const CandidateDetail = () => {
   const { id } = useParams();
@@ -464,7 +478,7 @@ const CandidateDetail = () => {
   });
 
   useEffect(() => {
-    fetch(`/api/candidates/${id}`)
+    apiFetch(`/api/candidates/${id}`)
       .then((res) => res.json())
       .then((d) => {
         setCand(d);
@@ -476,6 +490,9 @@ const CandidateDetail = () => {
           status: String(d.status || "1"),
           birth_date: fmtDt(d.birth_date),
           expected_join_date: fmtDt(d.expected_join_date),
+          job_title: d.job_title || "",
+          planned_department: d.planned_department || "",
+          employment_type: d.employment_type || "",
           interview_1_date: fmtDt(d.interview_1_date),
           interview_2_date: fmtDt(d.interview_2_date),
           retirement_date: fmtDt(d.retirement_date),
@@ -552,7 +569,7 @@ const CandidateDetail = () => {
         const expDateStr = joinDate.toISOString().split("T")[0];
 
         try {
-          await fetch("/api/expenses", {
+          await apiFetch("/api/expenses", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -582,7 +599,7 @@ const CandidateDetail = () => {
         family: fam,
         ...currentOverrides, // ★引数で上書きされたデータ（ステータス9等）を適用
       };
-      const res = await fetch(`/api/candidates/${id}`, {
+      const res = await apiFetch(`/api/candidates/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -1156,6 +1173,7 @@ const CandidateDetail = () => {
                 >
                   基本情報
                 </h4>
+                {!isCoop && <EmploymentFields value={f} onChange={hChg} />}
                 <div
                   style={{
                     marginBottom: "16px",
@@ -2357,7 +2375,7 @@ const ProgressModal = ({ cand, onClose, onUpdate }) => {
         payload.status = "9";
       }
 
-      const res = await fetch(`/api/candidates/${cand.id}`, {
+      const res = await apiFetch(`/api/candidates/${cand.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -2826,7 +2844,7 @@ const CandidateList = () => {
   const nav = useNavigate();
 
   const fetchC = () => {
-    fetch("/api/candidates")
+    apiFetch("/api/candidates")
       .then((r) => r.json())
       .then((d) => {
         setCands(d);
@@ -2838,7 +2856,7 @@ const CandidateList = () => {
   const hDel = async (id) => {
     if (!window.confirm("一覧から削除（非表示に）しますか？")) return;
     try {
-      await fetch(`/api/candidates/${id}`, {
+      await apiFetch(`/api/candidates/${id}`, {
         method: "DELETE",
       });
       fetchC();
@@ -2848,7 +2866,7 @@ const CandidateList = () => {
   const hRestore = async (id) => {
     if (!window.confirm("このデータを復元しますか？")) return;
     try {
-      await fetch(`/api/candidates/${id}/restore`, {
+      await apiFetch(`/api/candidates/${id}/restore`, {
         method: "PATCH",
       });
       fetchC();
@@ -2864,7 +2882,7 @@ const CandidateList = () => {
     )
       return;
     try {
-      await fetch(`/api/candidates/${id}/physical`, {
+      await apiFetch(`/api/candidates/${id}/physical`, {
         method: "DELETE",
       });
       fetchC();
@@ -3265,6 +3283,9 @@ const RegistrationForm = () => {
     introducer: "", // ★紹介元
     internal_contact: "", // ★社内担当
     desired_dept: "", // ★希望部署
+    job_title: "",
+    planned_department: "",
+    employment_type: "",
   });
 
   const hChg = (e) => setF({ ...f, [e.target.name]: e.target.value });
@@ -3305,7 +3326,7 @@ const RegistrationForm = () => {
     }
 
     try {
-      const res = await fetch("/api/candidates", {
+      const res = await apiFetch("/api/candidates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -3335,6 +3356,9 @@ const RegistrationForm = () => {
           introducer: "",
           internal_contact: "",
           desired_dept: "",
+          job_title: "",
+          planned_department: "",
+          employment_type: "",
         });
       }
     } catch (e) {
@@ -3398,6 +3422,7 @@ const RegistrationForm = () => {
           {!f.is_coop ? (
             /* 個人の場合 */
             <>
+              <EmploymentFields value={f} onChange={hChg} />
               <div style={s.flexRow}>
                 <div style={{ flex: 1 }}>
                   <label style={s.lbl}>氏名</label>
@@ -3689,8 +3714,8 @@ const Dashboard = () => {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/candidates").then((res) => res.json()),
-      fetch("/api/expenses").then((res) => res.json()),
+      apiFetch("/api/candidates").then((res) => res.json()),
+      apiFetch("/api/expenses").then((res) => res.json()),
     ])
       .then(([candData, expData]) => {
         setCands(candData);
@@ -3807,18 +3832,7 @@ const Dashboard = () => {
   const maxPipeline = Math.max(...pipeline.map((p) => p.count), 1);
 
   // 直近の入社予定（個人応募のみ）
-  const upcomingJoins = activeCands
-    .filter(
-      (c) =>
-        !c.is_coop &&
-        (String(c.status) === "5" || String(c.status) === "6") &&
-        c.expected_join_date,
-    )
-    .filter((c) => new Date(c.expected_join_date) >= today)
-    .sort(
-      (a, b) => new Date(a.expected_join_date) - new Date(b.expected_join_date),
-    )
-    .slice(0, 3);
+  const upcomingJoins = getPlannedJoiners(cands, calendarDate()).slice(0, 3);
 
   // ★統計処理: イベント発生ベースで集計する（削除データも含む）
   const monthlyStats = monthsInPeriod.map((mon) => {
@@ -4362,6 +4376,7 @@ const Dashboard = () => {
                           }}
                         >
                           予定日: {joinDate.toLocaleDateString("ja-JP")}
+                          <div style={{ marginTop: "2px" }}>{[c.planned_department, c.job_title, c.employment_type].filter(Boolean).join(" ／ ") || "—"}</div>
                         </div>
                       </div>
                     </div>
@@ -4717,7 +4732,7 @@ const ExpensePage = () => {
   });
 
   const fetchExps = () => {
-    fetch("/api/expenses")
+    apiFetch("/api/expenses")
       .then((res) => res.json())
       .then((data) => setExps(data))
       .catch((err) => console.error("経費取得エラー:", err));
@@ -4744,7 +4759,7 @@ const ExpensePage = () => {
       return;
     }
     try {
-      const res = await fetch("/api/expenses", {
+      const res = await apiFetch("/api/expenses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -4781,7 +4796,7 @@ const ExpensePage = () => {
       return;
     }
     try {
-      const res = await fetch(`/api/expenses/${id}`, {
+      const res = await apiFetch(`/api/expenses/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -4804,7 +4819,7 @@ const ExpensePage = () => {
   const handleDelete = async (id) => {
     if (!window.confirm("削除しますか？")) return;
     try {
-      await fetch(`/api/expenses/${id}`, {
+      await apiFetch(`/api/expenses/${id}`, {
         method: "DELETE",
       });
       fetchExps();
@@ -5158,7 +5173,7 @@ const Sidebar = () => {
   );
 };
 
-export default function App() {
+function ManagementApp() {
   return (
     <Router>
       <div style={s.wrap}>
@@ -5175,3 +5190,5 @@ export default function App() {
     </Router>
   );
 }
+
+export default function App() { return <Auth><ManagementApp /></Auth>; }

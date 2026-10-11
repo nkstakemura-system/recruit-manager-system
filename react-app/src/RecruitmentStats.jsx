@@ -1,3 +1,4 @@
+import { apiFetch } from "./api";
 import React, { useState, useEffect, useMemo } from "react";
 
 // 共通テーマ
@@ -34,8 +35,8 @@ const RecruitmentStats = () => {
   useEffect(() => {
     // ★修正：ローカルIPを消して相対パスに変更しました
     Promise.all([
-      fetch("/api/candidates").then((r) => r.json()),
-      fetch("/api/expenses").then((r) => r.json()),
+      apiFetch("/api/candidates").then((r) => r.json()),
+      apiFetch("/api/expenses").then((r) => r.json()),
     ]).then(([cData, eData]) => {
       setCands(cData);
       setExps(eData);

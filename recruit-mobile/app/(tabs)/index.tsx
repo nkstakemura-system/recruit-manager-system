@@ -1,3 +1,5 @@
+import MobileAuth from "../../components/mobile-auth";
+import { mobileClient } from "../../lib/nativeClient";
 import React, { useState, useEffect, useCallback } from "react";
 // ★ SafeAreaView を 'react-native' から外し、新しい専用ライブラリから読み込むように修正
 import {
@@ -15,10 +17,6 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-// ★本番環境（Render）のAPI URLに完全固定
-const BASE_URL = "https://recruit-manager-system.onrender.com";
-const API_URL = `${BASE_URL}/api/candidates`;
-const EXP_URL = `${BASE_URL}/api/expenses`;
 
 const colors = {
   bg: "#f8fafc",
@@ -32,15 +30,25 @@ const colors = {
   tabBg: "#1e293b",
 };
 
+type Candidate = {
+  id: string | number; name_kanji: string; name_kana: string;
+  status: string | number; applied_at: string; expected_join_date?: string | null;
+  is_deleted?: boolean; is_retired?: boolean; is_coop?: boolean;
+  birth_date?: string | null; age?: string | number | null; experience?: string;
+  interview_1_date?: string | null; interview_2_date?: string | null;
+  tel?: string[]; email?: string[]; address?: string; address_banchi?: string;
+  address_building?: string; zip_code?: string;
+};
+type Expense = { expense_date: string; amount: number };
 // --- ステータスラベルの取得関数 ---
-const getStatusLabel = (c) => {
+const getStatusLabel = (c: Candidate | null) => {
   if (!c || !c.status) return "受付";
   const st = String(c.status);
 
   // ★修正：不採用(9)の場合は、理由に関わらず「不採用」と表示する
   if (st === "9") return "不採用";
 
-  const labels = {
+  const labels: Record<string, string> = {
     "1": "受付",
     "2": "面接打診中",
     "3": "1次面接",
@@ -51,24 +59,26 @@ const getStatusLabel = (c) => {
   return labels[st] || "受付";
 };
 
-export default function App() {
-  const [candidates, setCandidates] = useState([]);
-  const [exps, setExps] = useState([]);
+function RecruitmentScreen() {
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [exps, setExps] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false); // ★追加: 更新中かどうかの判定用ステート
   const [activeTab, setActiveTab] = useState("dashboard");
-  const [selectedCandidate, setSelectedCandidate] = useState(null);
+  const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
   // ★追加: データの取得処理を共通化
   const fetchData = useCallback(async () => {
     try {
       const [candRes, expRes] = await Promise.all([
-        fetch(API_URL),
-        fetch(EXP_URL),
+        mobileClient.apiFetch("/api/candidates"),
+        mobileClient.apiFetch("/api/expenses"),
       ]);
+      if (!candRes.ok || !expRes.ok) throw new Error("Data unavailable");
       const candData = await candRes.json();
       const expData = await expRes.json();
+      if (!Array.isArray(candData) || !Array.isArray(expData)) throw new Error("Invalid data response");
       setCandidates(candData);
       setExps(expData);
     } catch (err) {
@@ -102,6 +112,7 @@ export default function App() {
     );
   }
 
+
   const activeCands = candidates.filter((c) => !c.is_deleted && !c.is_retired);
 
   // --- ① ダッシュボード ---
@@ -110,7 +121,8 @@ export default function App() {
     today.setHours(0, 0, 0, 0);
 
     // 【滞留】の定義：入社日が過去の人は除外
-    const activeCands = candidates.filter((c) => {
+
+  const activeCands = candidates.filter((c) => {
       if (c.is_deleted || c.is_retired) return false;
       const st = String(c.status);
       if (st === "6" && c.expected_join_date) {
@@ -185,10 +197,10 @@ export default function App() {
           (String(c.status) === "5" || String(c.status) === "6") &&
           c.expected_join_date,
       )
-      .filter((c) => new Date(c.expected_join_date) >= today)
+      .filter((c) => new Date(c.expected_join_date || "") >= today)
       .sort(
         (a, b) =>
-          new Date(a.expected_join_date) - new Date(b.expected_join_date),
+          new Date(a.expected_join_date || "").getTime() - new Date(b.expected_join_date || "").getTime(),
       )
       .slice(0, 3);
 
@@ -756,6 +768,7 @@ export default function App() {
   // --- ③ 詳細閲覧 ---
   const renderDetail = () => {
     const c = selectedCandidate;
+    if (!c) return null;
     const bdate = c.birth_date ? c.birth_date.split("T")[0] : null;
     const ageDisplay = bdate
       ? `${new Date().getFullYear() - new Date(bdate).getFullYear()}歳`
@@ -1055,3 +1068,5 @@ const styles = StyleSheet.create({
   tabTextActive: { color: "#ffffff" },
   tabDivider: { width: 1, backgroundColor: "#334155", marginVertical: 12 },
 });
+
+export default function App() { return <MobileAuth><RecruitmentScreen /></MobileAuth>; }
