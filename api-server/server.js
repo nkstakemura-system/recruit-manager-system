@@ -1,6 +1,7 @@
 const express = require("express");
 const { createAuth } = require("./auth");
 const db = require("./db");
+const { normalizeOfferDate, initialOfferDate, todayTokyo, offerDateUpdateSql } = require("./offerDate");
 require("dotenv").config();
 
 const app = express();
@@ -14,12 +15,18 @@ const optionalText = value => typeof value === "string" && value.trim() ? value.
 // Meeting tokens are accepted only by this read-only endpoint.
 app.get("/api/meeting/hr-summary", auth.requireMeeting, async (req, res) => {
   try {
-    const { calendarDate, buildHrSummary } = await import("../shared/hrSummary.mjs");
+    const { calendarDate, buildHrSummary, reportMonth } = await import("../shared/hrSummary.mjs");
     const asOf = calendarDate();
+    let month;
+    try { month = reportMonth(req.query?.month, asOf); } catch { return res.status(400).json({ error: "Invalid report month" }); }
     const result = await db.query(
       `SELECT id, name_kanji, status,
         to_char(expected_join_date, 'YYYY-MM-DD') AS expected_join_date,
-        planned_department, job_title, employment_type
+        planned_department, job_title, employment_type,
+        applied_at,
+        to_char(interview_1_date, 'YYYY-MM-DD') AS interview_1_date,
+        to_char(interview_2_date, 'YYYY-MM-DD') AS interview_2_date,
+        to_char(offer_date, 'YYYY-MM-DD') AS offer_date
       FROM candidates
       WHERE COALESCE(is_coop, false) = false
         AND COALESCE(is_deleted, false) = false
@@ -27,7 +34,7 @@ app.get("/api/meeting/hr-summary", auth.requireMeeting, async (req, res) => {
         AND (retirement_date IS NULL OR retirement_date > $1::date)`,
       [asOf],
     );
-    res.json(buildHrSummary(result.rows, asOf));
+    res.json(buildHrSummary(result.rows, asOf, month));
   } catch (err) {
     console.error("Database operation failed");
     res.status(500).send("Server Error");
@@ -39,7 +46,7 @@ app.use("/api", auth.requireSession);
 app.get("/api/candidates", async (req, res) => {
   try {
     const result = await db.query(
-      "SELECT * FROM candidates ORDER BY created_at DESC",
+      "SELECT *, to_char(offer_date, 'YYYY-MM-DD') AS offer_date FROM candidates ORDER BY created_at DESC",
     );
     res.json(result.rows);
   } catch (err) {
@@ -50,7 +57,7 @@ app.get("/api/candidates", async (req, res) => {
 
 app.get("/api/candidates/:id", async (req, res) => {
   try {
-    const result = await db.query("SELECT * FROM candidates WHERE id = $1", [
+    const result = await db.query("SELECT *, to_char(offer_date, 'YYYY-MM-DD') AS offer_date FROM candidates WHERE id = $1", [
       req.params.id,
     ]);
     if (result.rows.length === 0) return res.status(404).send("Not Found");
@@ -61,6 +68,9 @@ app.get("/api/candidates/:id", async (req, res) => {
 });
 
 app.post("/api/candidates", async (req, res) => {
+  let offerDate;
+  try { offerDate = initialOfferDate(req.body.status || 1, req.body.offer_date); }
+  catch { return res.status(400).json({ error: "Invalid offer date" }); }
   const {
     name_kanji,
     name_kana,
@@ -92,9 +102,9 @@ app.post("/api/candidates", async (req, res) => {
         name_kanji, name_kana, age, birth_year, experience, 
         tel, email, status, primary_contact, applied_at,
         is_coop, company_name, introducer, internal_contact, desired_dept, subcontract_status,
-        source_type, agent_name, introducer_fee, job_title, planned_department, employment_type
+        source_type, agent_name, introducer_fee, job_title, planned_department, employment_type, offer_date
       ) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING *`,
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23) RETURNING *`,
       [
         name_kanji,
         name_kana,
@@ -118,6 +128,7 @@ app.post("/api/candidates", async (req, res) => {
         optionalText(job_title),
         optionalText(planned_department),
         optionalText(employment_type),
+        offerDate,
       ],
     );
     res.json(result.rows[0]);
@@ -129,6 +140,9 @@ app.post("/api/candidates", async (req, res) => {
 
 app.put("/api/candidates/:id", async (req, res) => {
   const b = req.body;
+  let offerDate;
+  try { offerDate = normalizeOfferDate(b.offer_date); }
+  catch { return res.status(400).json({ error: "Invalid offer date" }); }
   try {
     await db.query(
       `UPDATE candidates SET 
@@ -147,7 +161,8 @@ app.put("/api/candidates/:id", async (req, res) => {
         source_type=$57, introducer_fee=$58,
         job_title=CASE WHEN $59::boolean THEN $60::text ELSE job_title END,
         planned_department=CASE WHEN $61::boolean THEN $62::text ELSE planned_department END,
-        employment_type=CASE WHEN $63::boolean THEN $64::text ELSE employment_type END
+        employment_type=CASE WHEN $63::boolean THEN $64::text ELSE employment_type END,
+        ${offerDateUpdateSql}
       WHERE id = $56`,
       [
         b.name_kanji,
@@ -211,6 +226,7 @@ app.put("/api/candidates/:id", async (req, res) => {
         Object.prototype.hasOwnProperty.call(b, "job_title"), optionalText(b.job_title),
         Object.prototype.hasOwnProperty.call(b, "planned_department"), optionalText(b.planned_department),
         Object.prototype.hasOwnProperty.call(b, "employment_type"), optionalText(b.employment_type),
+        Object.prototype.hasOwnProperty.call(b, "offer_date"), offerDate, todayTokyo(),
       ],
     );
     res.json({ message: "更新完了" });

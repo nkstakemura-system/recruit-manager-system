@@ -1,7 +1,7 @@
 import Auth from "./Auth";
 import { apiFetch } from "./api";
 import React, { useState, useEffect } from "react";
-import { getPlannedJoiners, calendarDate } from "../../shared/hrSummary.mjs";
+import { getPlannedJoiners, calendarDate, buildHrSummary } from "../../shared/hrSummary.mjs";
 import {
   BrowserRouter as Router,
   Routes,
@@ -438,6 +438,14 @@ const ProgressStatus = ({ candidate, s, thm }) => {
   );
 };
 
+const OfferDateField = ({ value, onChange }) => (
+  <label style={{ ...s.lbl, marginBottom: "12px" }}>内定日
+    <input name="offer_date" type="text" placeholder="YYYY/MM/DD" maxLength={10}
+      value={(value || "").slice(0, 10).replaceAll("-", "/")}
+      onChange={event => onChange(event.target.value.replaceAll("/", "-"))}
+      style={{ ...s.inp, width: "160px", marginTop: "6px" }} />
+  </label>
+);
 const EmploymentFields = ({ value, onChange }) => (
   <div style={{ ...s.flexRow, flexWrap: "wrap", gap: "12px" }}>
     {[["job_title", "職種"], ["planned_department", "配属予定部署"], ["employment_type", "雇用形態"]].map(([name, label]) => (
@@ -490,6 +498,7 @@ const CandidateDetail = () => {
           status: String(d.status || "1"),
           birth_date: fmtDt(d.birth_date),
           expected_join_date: fmtDt(d.expected_join_date),
+          offer_date: fmtDt(d.offer_date),
           job_title: d.job_title || "",
           planned_department: d.planned_department || "",
           employment_type: d.employment_type || "",
@@ -1173,7 +1182,7 @@ const CandidateDetail = () => {
                 >
                   基本情報
                 </h4>
-                {!isCoop && <EmploymentFields value={f} onChange={hChg} />}
+                {!isCoop && <><OfferDateField value={f.offer_date} onChange={value => setF(previous => ({ ...previous, offer_date: value }))}/><EmploymentFields value={f} onChange={hChg} /></>}
                 <div
                   style={{
                     marginBottom: "16px",
@@ -2317,6 +2326,7 @@ const ProgressModal = ({ cand, onClose, onUpdate }) => {
     decline_reason: "",
     interview_1_date: "",
     interview_2_date: "",
+    offer_date: "",
     expected_join_date: "",
     interview_2_attendee: "",
     applied_at: "",
@@ -2331,6 +2341,7 @@ const ProgressModal = ({ cand, onClose, onUpdate }) => {
     if (cand) {
       setF({
         status: String(cand.status || "1"),
+        offer_date: cand.offer_date ? cand.offer_date.slice(0, 10) : "",
         decline_reason: cand.decline_reason || "",
         interview_1_date: cand.interview_1_date
           ? cand.interview_1_date.split("T")[0]
@@ -2696,6 +2707,7 @@ const ProgressModal = ({ cand, onClose, onUpdate }) => {
           </div>
         )}
 
+        {!cand.is_coop && <OfferDateField value={f.offer_date} onChange={value => setF(previous => ({ ...previous, offer_date: value }))}/>}
         {!cand.is_coop && f.status === "5" && (
           <div style={{ marginBottom: "20px" }}>
             <label style={s.lbl}>入社予定日</label>
@@ -3963,6 +3975,13 @@ const Dashboard = () => {
 
   return (
     <div style={s.main} className="dashboard-container">
+      <div style={{ maxWidth: "1200px", margin: "0 auto 12px", display: "flex", gap: "20px", alignItems: "center", flexWrap: "wrap", padding: "10px 0", borderBottom: `1px solid ${thm.brd}` }}>
+        <strong>当月実績 {calendarDate().slice(0, 7).replace("-", "/")}</strong>
+        {loading ? <span>読み込み中</span> : (() => {
+          const { monthly } = buildHrSummary(cands);
+          return <><span>受付 {monthly.received}名</span><span>面接 {monthly.interviews}件</span><span>内定 {monthly.offers}名</span></>;
+        })()}
+      </div>
       <style>{`
         @media print {
           @page { size: A4 portrait; margin: 10mm; }
