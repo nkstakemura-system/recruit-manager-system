@@ -226,7 +226,7 @@ app.put("/api/candidates/:id", async (req, res) => {
         Object.prototype.hasOwnProperty.call(b, "job_title"), optionalText(b.job_title),
         Object.prototype.hasOwnProperty.call(b, "planned_department"), optionalText(b.planned_department),
         Object.prototype.hasOwnProperty.call(b, "employment_type"), optionalText(b.employment_type),
-        Object.prototype.hasOwnProperty.call(b, "offer_date"), offerDate, todayTokyo(),
+        Object.prototype.hasOwnProperty.call(b, "offer_date"), offerDate, todayTokyo(), b.status,
       ],
     );
     res.json({ message: "更新完了" });

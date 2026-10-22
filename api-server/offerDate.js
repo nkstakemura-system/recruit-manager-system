@@ -13,7 +13,7 @@ function initialOfferDate(status, value, today = todayTokyo()) {
 // PostgreSQL SET expressions use the pre-update row. No read/update race or backfill.
 const offerDateUpdateSql = `offer_date=CASE
   WHEN $65::boolean AND $66::date IS NOT NULL THEN $66::date
-  WHEN offer_date IS NULL AND status::text IS DISTINCT FROM '5' AND $7::text = '5' THEN $67::date
+  WHEN offer_date IS NULL AND status::text IS DISTINCT FROM '5' AND $68::text = '5' THEN $67::date
   WHEN $65::boolean THEN $66::date
   ELSE offer_date END`;
 module.exports = { normalizeOfferDate, initialOfferDate, todayTokyo, offerDateUpdateSql };

@@ -85,7 +85,7 @@ test("legacy POST accepts omitted fields; PUT preserves omitted values and suppo
   assert.equal(h.queries[0].params.length, 23);
   assert.deepEqual(Array.from(h.queries[0].params.slice(19, 22)), [null, null, null]);
   await h.routes.get("put /api/candidates/:id")({ body: {}, params: { id: "1" } }, h.response());
-  assert.equal(h.queries[1].params.length, 67);
+  assert.equal(h.queries[1].params.length, 68);
   assert.deepEqual(Array.from(h.queries[1].params.slice(58, 64)), [false, null, false, null, false, null]);
   assert.match(h.queries[1].sql, /ELSE job_title END/);
   await h.routes.get("put /api/candidates/:id")({
@@ -151,9 +151,10 @@ test("offer date PUT uses old-row atomic transition, preserves omitted values, s
     await put({ body: { status }, params: { id: 1 } }, h.response());
     const query = h.queries.at(-1);
     assert.equal(query.params[64], false); assert.equal(query.params[65], null);
-    assert.match(query.sql, /offer_date IS NULL AND status::text IS DISTINCT FROM '5' AND \$7::text = '5'/);
+    assert.match(query.sql, /offer_date IS NULL AND status::text IS DISTINCT FROM '5' AND \$68::text = '5'/);
     assert.match(query.sql, /ELSE offer_date END/);
     assert.equal(query.params[66], offerModule.todayTokyo());
+    assert.equal(query.params[67], status);
   }
   for (const date of ["2026-09-01", null, ""]) {
     await put({ body: { status: 6, offer_date: date }, params: { id: 1 } }, h.response());
