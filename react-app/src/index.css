@@ -61,3 +61,27 @@ input:disabled, select:disabled, textarea:disabled { background: #edf1f6 !import
 .nks-auth-card input { min-height:43px; padding:10px 12px; border:1px solid var(--nks-border); border-radius:8px; }
 .nks-auth-submit { border:0; color:#fff; background:var(--nks-navy); padding:12px; border-radius:8px; font-weight:700; }
 .nks-logout { border:1px solid #bac6d7; color:var(--nks-ink); background:#fff; border-radius:7px; padding:7px 12px; box-shadow:0 1px 5px rgba(0,26,61,.08); }
+
+/* 応募者一覧（第3弾）：見出し・タブ・検索・新規登録を左寄せで1段に集約し、一覧の表示領域を確保 */
+.nks-list-head { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 14px 0 10px; margin: -14px 0 4px; }
+.nks-list-head h2 { font-size: 20px; margin: 0 4px 0 0; }
+.nks-list-tabs { display: inline-flex; gap: 2px; padding: 3px; border-radius: 8px; background: #e3e8ef; }
+.nks-list-tabs button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--nks-muted); font-size: 13px; font-weight: 700; }
+.nks-list-tabs button.is-active { background: #fff; color: var(--nks-navy); box-shadow: 0 1px 3px rgba(0,26,61,.12); }
+.nks-list-tab-count { min-width: 20px; height: 18px; padding: 0 5px; border-radius: 9px; background: #d3dae4; color: var(--nks-ink); font-size: 11px; display: inline-flex; align-items: center; justify-content: center; }
+.nks-list-tabs button.is-active .nks-list-tab-count { background: var(--nks-navy); color: #fff; }
+.nks-list-search { width: 220px; height: 32px; padding: 0 10px; border: 1px solid var(--nks-border); border-radius: 6px; background: #fff; font-size: 13px; }
+.nks-list-new { display: inline-flex; align-items: center; height: 32px; padding: 0 14px; border-radius: 6px; background: var(--nks-navy); color: #fff; font-size: 13px; font-weight: 700; text-decoration: none; }
+.nks-list-card { background: #fff; border: 1px solid var(--nks-border); border-radius: 8px; padding: 4px 8px; margin-bottom: 16px; }
+.nks-contact { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
+.nks-contact-badge { display: inline-flex; align-items: center; justify-content: center; height: 18px; min-width: 44px; padding: 0 6px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+.nks-contact-badge.is-tel { background: #e8eef7; color: var(--nks-navy); }
+.nks-contact-badge.is-mail { background: #f1f3f7; color: #4f6f9f; border: 1px solid #d6deea; }
+.nks-contact-value { font-size: 13px; color: var(--nks-ink); text-decoration: none; overflow-wrap: anywhere; }
+.nks-end-note { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: 11px; color: var(--nks-muted); max-width: 260px; }
+.nks-end-tag { padding: 0 6px; border: 1px solid #c3cbd6; border-radius: 4px; font-weight: 700; }
+.nks-end-date { font-weight: 700; }
+.nks-end-reason { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+/* 終了・削除済：行をグレーアウト（操作ボタンは従来どおり使える） */
+.nks-row-ended > td { background: #f4f5f7; color: #7b8594 !important; }
+.nks-row-ended > td .nks-list-cell-main > span:first-child, .nks-row-ended .nks-contact-badge { filter: grayscale(1); opacity: .8; }

@@ -160,4 +160,4 @@ function createPgSelectionStore(db) {
   return { ready, transaction };
 }
 
-module.exports = { createPgSelectionStore, shiftedAppliedAt, mirrorUpdate };
+module.exports = { createPgSelectionStore, shiftedAppliedAt, mirrorUpdate, dateColumn };

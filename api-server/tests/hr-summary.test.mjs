@@ -63,7 +63,7 @@ function serverHarness(mode = "development", rows = [], respond = null, customDb
       if (name === "./auth") return { createAuth: () => ({ install() {}, requireSession() {}, requireMeeting() {} }) };
       if (name === "./db") return db;
       if (name === "./offerDate") return offerModule;
-      if (["./selectionFlow", "./selectionService", "./selectionPgStore"].includes(name)) return requireLocal("." + name);
+      if (["./selectionFlow", "./selectionService", "./selectionPgStore", "./dashboardFacts"].includes(name)) return requireLocal("." + name);
       if (name === "dotenv") return { config() {} };
       if (name === "path") return path;
       throw new Error("Unexpected dependency: " + name);

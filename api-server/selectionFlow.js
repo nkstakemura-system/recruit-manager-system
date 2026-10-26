@@ -98,6 +98,13 @@ function badgeLabel(kind, stage) {
   }[kind] || null;
 }
 
+// 一覧に付ける選考情報（最新工程の表示名。終了工程なら終了の種別と日付）
+function listSelectionFields(kind, stage, date) {
+  const fields = { selection_label: badgeLabel(kind, stage) };
+  if (TERMINAL.has(kind)) Object.assign(fields, { selection_ended_kind: kind, selection_ended_date: ymd(date) });
+  return fields;
+}
+
 // 終了時点の段階（辞退理由の文言に使う。既存の「1次面接辞退: 理由」形式に合わせる）
 function stageLabel(event) {
   if (!event) return "応募";
@@ -455,5 +462,5 @@ module.exports = {
   selectionError, isDate, ymd, todayTokyo, snapshotOf, legacyEvents, effectiveSteps, deriveMirror, syncIssues,
   candidatePutConflict, unreadableDate, isUnconfirmedLegacyInterview,
   nextActions, nextInterviewStage, buildStep, buildCorrection, buildVoid, normalizeContactHistory,
-  selectionVersion, timelineView, stepLabel, badgeLabel, declineReason, stageLabel,
+  selectionVersion, timelineView, stepLabel, badgeLabel, listSelectionFields, declineReason, stageLabel,
 };

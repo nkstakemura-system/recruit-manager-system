@@ -30,7 +30,8 @@ const RecruitmentStats = () => {
   });
 
   const [selectedSource, setSelectedSource] = useState(null); // 円グラフドリルダウン用
-  const [baseHeadcount, setBaseHeadcount] = useState(50); // 期首人数の仮置き
+  // 期首人数は実績データが無いため未設定で始める（入力された場合だけ離職率を従来の式で計算する）
+  const [baseHeadcount, setBaseHeadcount] = useState(null);
 
   useEffect(() => {
     // ★修正：ローカルIPを消して相対パスに変更しました
@@ -138,8 +139,9 @@ const RecruitmentStats = () => {
   ).length;
 
   // 指標算出
-  const turnoverRate =
-    baseHeadcount + joinedLast3Y > 0
+  const turnoverRate = baseHeadcount == null
+    ? "—"
+    : baseHeadcount + joinedLast3Y > 0
       ? ((retiredLast3Y / (baseHeadcount + joinedLast3Y)) * 100).toFixed(1)
       : 0;
 
@@ -479,7 +481,7 @@ const RecruitmentStats = () => {
               style={{ fontSize: "32px", fontWeight: "bold", color: thm.dng }}
             >
               {turnoverRate}
-              <span style={{ fontSize: "16px", marginLeft: "4px" }}>%</span>
+              {baseHeadcount != null && <span style={{ fontSize: "16px", marginLeft: "4px" }}>%</span>}
             </div>
             <div
               style={{
@@ -494,10 +496,11 @@ const RecruitmentStats = () => {
               期首人数基準:{" "}
               <input
                 type="number"
-                value={baseHeadcount}
-                onChange={(e) => setBaseHeadcount(Number(e.target.value))}
+                value={baseHeadcount ?? ""}
+                placeholder="未設定"
+                onChange={(e) => setBaseHeadcount(e.target.value === "" ? null : Number(e.target.value))}
                 style={{
-                  width: "40px",
+                  width: "56px",
                   padding: "2px",
                   border: "1px solid #fca5a5",
                   borderRadius: "4px",

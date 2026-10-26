@@ -4,7 +4,8 @@ const db = require("./db");
 const { normalizeOfferDate, initialOfferDate, todayTokyo, offerDateUpdateSql } = require("./offerDate");
 const selectionFlow = require("./selectionFlow");
 const selection = require("./selectionService");
-const { createPgSelectionStore } = require("./selectionPgStore");
+const { createPgSelectionStore, dateColumn } = require("./selectionPgStore");
+const { buildFacts } = require("./dashboardFacts");
 require("dotenv").config();
 
 const app = express();
@@ -64,14 +65,20 @@ app.get("/api/candidates", async (req, res) => {
   try {
     // 選考履歴テーブル未作成でも一覧は従来どおり表示する。
     // 一覧バッジには、取消されていない最新の工程（実際の面接回数）を使う。
+    // 最新工程の日付は訂正後の値（終了タブの終了日に使う）。
     const result = (await selectionStore.ready())
       ? await db.query(
         `SELECT c.*, to_char(c.offer_date, 'YYYY-MM-DD') AS offer_date,
           le.kind AS latest_selection_kind, le.stage_number AS latest_selection_stage,
-          le.unconfirmed_legacy AS latest_selection_unconfirmed_legacy
+          le.unconfirmed_legacy AS latest_selection_unconfirmed_legacy, le.event_date AS latest_selection_date
         FROM candidates c
         LEFT JOIN LATERAL (
           SELECT e.kind, e.stage_number,
+            COALESCE((
+              SELECT to_char(x.event_date, 'YYYY-MM-DD') FROM public.candidate_selection_events x
+              WHERE x.candidate_id = c.id AND x.kind = 'correction' AND x.target_event_id = e.id
+              ORDER BY x.seq DESC LIMIT 1
+            ), to_char(e.event_date, 'YYYY-MM-DD')) AS event_date,
             -- selectionFlow.isUnconfirmedLegacyInterview と同じ条件（従来データの受付のまま1次面接日のみ）
             (e.source = 'legacy' AND e.kind = 'interview_scheduled' AND e.stage_number = 1
               AND e.payload->>'legacy_status' = '1') IS TRUE AS unconfirmed_legacy
@@ -91,8 +98,31 @@ app.get("/api/candidates", async (req, res) => {
       );
     // 従来データの「受付のまま1次面接日のみ」は、一覧も既存の status（受付）で表示する
     res.json(result.rows.map(row => row.latest_selection_kind && row.latest_selection_unconfirmed_legacy !== true
-      ? { ...row, selection_label: selectionFlow.badgeLabel(row.latest_selection_kind, row.latest_selection_stage) }
+      ? { ...row, ...selectionFlow.listSelectionFields(row.latest_selection_kind, row.latest_selection_stage, row.latest_selection_date) }
       : row));
+  } catch (err) {
+    console.error("Database operation failed");
+    res.status(500).send("Server Error");
+  }
+});
+
+// 期別ダッシュボードの集計元（読み取りのみ）。応募者ごとの選考の事実だけを返し、氏名・連絡先は返さない。
+// 選考履歴テーブル未作成時は、既存列から投影した工程（日付不明は null）で返す。
+app.get("/api/dashboard/facts", async (req, res) => {
+  try {
+    const managed = await selectionStore.ready();
+    const candidates = (await db.query(
+      `SELECT id, is_coop, is_deleted, status::text AS status, applied_at, decline_reason,
+        ${dateColumn("interview_1_date")}, ${dateColumn("interview_2_date")},
+        ${dateColumn("offer_date")}, ${dateColumn("expected_join_date")}
+      FROM public.candidates`,
+    )).rows;
+    const events = managed ? (await db.query(
+      `SELECT candidate_id::text AS candidate_id, id::text AS id, seq, kind, stage_number,
+        to_char(event_date, 'YYYY-MM-DD') AS event_date, source, target_event_id::text AS target_event_id
+      FROM public.candidate_selection_events ORDER BY candidate_id, seq`,
+    )).rows : [];
+    res.json({ as_of: todayTokyo(), history_table: managed, facts: buildFacts(candidates, events) });
   } catch (err) {
     console.error("Database operation failed");
     res.status(500).send("Server Error");

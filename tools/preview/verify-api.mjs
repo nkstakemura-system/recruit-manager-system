@@ -33,6 +33,7 @@ check("ログイン（架空の専用アカウント）", (await call("/api/auth
 // 選考操作を行わない応募者（集計の比較用）
 const untouched = rows => rows.filter(x => ![900001, 900002, 900003, 900005, 900006, 900008, 900011].includes(x.id));
 const summaryBefore = summary(untouched(await list()));
+const expenseCountBefore = (await call("/api/expenses")).data.length;
 
 // 1. 受付直後の選択肢
 let v = await timeline(900001);
@@ -131,7 +132,7 @@ r = await call("/api/candidates/900006", "PUT", { ...basicOf(c), is_coop: true }
 check("履歴なし：個人応募→協力業者は従来どおり変更できる", r.status === 200 && (await find(900006)).is_coop === true);
 r = await call("/api/candidates/900006", "PUT", { ...basicOf(await find(900006)), is_coop: false, status: c.status });
 check("履歴なし：協力業者→個人応募も従来どおり変更できる", r.status === 200 && (await find(900006)).is_coop === false);
-check("選考の更新・入社済みの操作で経費は自動登録されない", (await call("/api/expenses")).data.length === 0);
+check("選考の更新・入社済みの操作で経費は自動登録されない", (await call("/api/expenses")).data.length === expenseCountBefore);
 
 // 8-3. 従来データ：受付のまま1次面接日だけ（未来日・過去日）。status は受付のまま、実施は推定しない
 for (const id of [900010, 900011]) {

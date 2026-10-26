@@ -14,6 +14,7 @@ const root = path.resolve(__dirname, "..", "..");
 const flow = require(path.join(root, "api-server", "selectionFlow.js"));
 const selection = require(path.join(root, "api-server", "selectionService.js"));
 const { createMemorySelectionStore } = require(path.join(root, "api-server", "selectionMemoryStore.js"));
+const { buildFacts } = require(path.join(root, "api-server", "dashboardFacts.js"));
 
 const dist = path.join(root, "react-app", "dist");
 const indexPath = path.join(dist, "index.html");
@@ -42,10 +43,53 @@ const candidates = [
   // 従来データの例（受付のまま1次面接日だけが登録されている。未来日・過去日）→ 受付のまま1次面接予定として表示し、実施は推定しない
   { ...blank, id: 900010, name_kanji: "表示確認用・加藤", name_kana: "ヒョウジカクニンヨウ カトウ", status: 1, applied_at: "2026-10-05", interview_1_date: shiftDays(14), experience: "経験者", source_type: "求人", created_at: "2026-10-05T01:00:00Z" },
   { ...blank, id: 900011, name_kanji: "表示確認用・吉田", name_kana: "ヒョウジカクニンヨウ ヨシダ", status: 1, applied_at: "2026-09-20", interview_1_date: shiftDays(-14), experience: "未経験者", source_type: "求人", created_at: "2026-09-20T01:00:00Z" },
-  { ...blank, id: 900008, name_kanji: "表示確認用・協力担当", name_kana: "架空工業株式会社", is_coop: true, status: 1, applied_at: "2026-10-10", created_at: "2026-10-10T01:00:00Z" },
+  { ...blank, id: 900008, name_kanji: "表示確認用・協力担当", name_kana: "架空工業株式会社", is_coop: true, status: 1, applied_at: "2026-10-10", company_name: "架空工業株式会社", created_at: "2026-10-10T01:00:00Z" },
+  // 期別ダッシュボード確認用（第3弾）。選考履歴は起動時に seedHistory で本番と同じ選考APIから登録する
+  { ...blank, id: 900012, name_kanji: "表示確認用・中村", name_kana: "ヒョウジカクニンヨウ ナカムラ", status: 1, applied_at: "2026-08-05", tel: ["000-0000-0012"], primary_contact: "tel_0", source_type: "求人", created_at: "2026-08-05T01:00:00Z" },
+  { ...blank, id: 900013, name_kanji: "表示確認用・山本", name_kana: "ヒョウジカクニンヨウ ヤマモト", status: 1, applied_at: "2026-09-03", email: ["preview13@example.invalid"], primary_contact: "email_0", source_type: "求人", created_at: "2026-09-03T01:00:00Z" },
+  { ...blank, id: 900014, name_kanji: "表示確認用・中島", name_kana: "ヒョウジカクニンヨウ ナカジマ", status: 1, applied_at: "2026-08-28", source_type: "人材紹介", created_at: "2026-08-28T01:00:00Z" },
+  { ...blank, id: 900015, name_kanji: "表示確認用・前田", name_kana: "ヒョウジカクニンヨウ マエダ", status: 1, applied_at: "2026-03-02", source_type: "紹介", created_at: "2026-03-02T01:00:00Z" },
+  { ...blank, id: 900017, name_kanji: "表示確認用・岡田", name_kana: "ヒョウジカクニンヨウ オカダ", status: 1, applied_at: "2026-09-10", source_type: "求人", created_at: "2026-09-10T01:00:00Z" },
+  { ...blank, id: 900018, name_kanji: "表示確認用・後藤", name_kana: "ヒョウジカクニンヨウ ゴトウ", status: 1, applied_at: "2026-09-25", source_type: "求人", created_at: "2026-09-25T01:00:00Z" },
+  // 旧データ（選考履歴なし）の終了。終了日は記録が無いため「終了日不明」
+  { ...blank, id: 900016, name_kanji: "表示確認用・藤田", name_kana: "ヒョウジカクニンヨウ フジタ", status: 9, applied_at: "2026-01-15", interview_1_date: "2026-01-22", interview_2_date: "2026-02-01", decline_reason: "2次面接辞退: 架空の理由", source_type: "求人", created_at: "2026-01-15T01:00:00Z" },
 ];
-const expenses = [];
+const expenses = [
+  { id: 800001, payee: "架空求人媒体", amount: 120000, expense_date: "2026-09-01" },
+  { id: 800002, payee: "架空エージェント", amount: 300000, expense_date: "2026-10-01" },
+  { id: 800003, payee: "架空求人媒体", amount: 80000, expense_date: "2026-03-01" },
+];
 const store = createMemorySelectionStore(candidates, { ready: historyTable });
+
+// 架空の選考履歴（実際の操作と同じく selectionService 経由で追記する）
+async function seedHistory() {
+  const step = async (id, kind, event_date, extra = {}) => {
+    const v = await selection.getTimeline(store, id);
+    await selection.addStep(store, id, { expected_version: v.version, kind, event_date, ...extra }, "preview-seed@web");
+  };
+  const interview = async (id, ...dates) => {
+    for (const date of dates) { await step(id, "interview_scheduled", date); await step(id, "interview_completed", date); }
+  };
+  await interview(900012, "2026-08-12", "2026-08-26");
+  await step(900012, "offer", "2026-09-01");
+  await step(900012, "join_planned", "2026-10-01");
+  await step(900012, "joined", "2026-10-01");
+  await interview(900013, "2026-09-10", "2026-09-24", "2026-10-08");
+  await step(900013, "rejected", "2026-10-15");
+  await interview(900014, "2026-09-04");
+  await step(900014, "offer", "2026-09-15");
+  await step(900014, "declined", "2026-09-20", { note: "架空の理由（他社決定）" });
+  await interview(900015, "2026-03-10", "2026-03-20");
+  await step(900015, "offer", "2026-04-01");
+  await step(900015, "join_planned", "2026-05-01");
+  await step(900015, "joined", "2026-05-01");
+  await interview(900017, "2026-09-17");
+  await interview(900018, "2026-10-02");
+  const v = await selection.getTimeline(store, 900018);
+  await selection.correctStep(store, 900018, v.records.at(-1).id, { expected_version: v.version, event_date: "2026-10-03", reason: "架空の訂正" }, "preview-seed@web");
+  // 選考履歴を残したまま論理削除（実績は集計に残る）
+  candidates.find(c => c.id === 900017).is_deleted = true;
+}
 
 function send(res, code, payload, extra = {}) {
   const data = Buffer.from(JSON.stringify(payload));
@@ -71,7 +115,7 @@ function listRow(c) {
   if (!latest || flow.isUnconfirmedLegacyInterview(latest)) return c;
   return {
     ...c, latest_selection_kind: latest.kind, latest_selection_stage: latest.stage_number,
-    selection_label: flow.badgeLabel(latest.kind, latest.stage_number),
+    ...flow.listSelectionFields(latest.kind, latest.stage_number, latest.event_date),
   };
 }
 
@@ -112,6 +156,10 @@ async function api(req, res, pathname) {
     return send(res, 404, { error: "Not found" });
   }
 
+  if (pathname === "/api/dashboard/facts" && method === "GET") {
+    const events = historyTable ? candidates.flatMap(c => store.log(c.id).map(e => ({ ...e, candidate_id: String(c.id) }))) : [];
+    return send(res, 200, { as_of: flow.todayTokyo(), history_table: historyTable, facts: buildFacts(candidates, events) });
+  }
   if (pathname === "/api/candidates") {
     if (method === "GET") return send(res, 200, candidates.map(listRow));
     if (method === "POST") {
@@ -173,7 +221,7 @@ const contentTypes = {
   ".svg": "image/svg+xml", ".json": "application/json; charset=utf-8", ".png": "image/png", ".ico": "image/x-icon",
 };
 
-http.createServer(async (req, res) => {
+(historyTable ? seedHistory() : Promise.resolve()).then(() => http.createServer(async (req, res) => {
   try {
     const pathname = new URL(req.url, `http://${host}:${port}`).pathname;
     if (pathname.startsWith("/api/")) return await api(req, res, pathname);
@@ -191,4 +239,4 @@ http.createServer(async (req, res) => {
   console.log("ログイン名: preview / パスワード: preview-only");
   console.log(historyTable ? "モード: 選考履歴テーブルあり（第2弾の新しい選考更新）" : "モード: 選考履歴テーブルなし（DB適用前の従来動作）");
   console.log(`架空データ ${candidates.length} 件。更新はメモリ内のみで、終了すると消えます。終了: Ctrl+C`);
-});
+}));

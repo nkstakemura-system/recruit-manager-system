@@ -1,7 +1,6 @@
 import Auth from "./Auth";
 import { apiFetch } from "./api";
 import React, { useState, useEffect } from "react";
-import { getPlannedJoiners, calendarDate, buildHrSummary } from "../../shared/hrSummary.mjs";
 import {
   BrowserRouter as Router,
   Routes,
@@ -14,6 +13,7 @@ import {
 import RecruitmentStats from "./RecruitmentStats";
 import SelectionModal from "./selection/SelectionModal";
 import SelectionTimeline from "./selection/SelectionTimeline";
+import Dashboard from "./dashboard/PeriodDashboard";
 import { selectionApi, mirrorForForm, SELECTION_OWNED_FIELDS } from "./selection/selectionApi";
 
 // --- 入力フィルター ---
@@ -2712,6 +2712,40 @@ const ProgressModal = ({ cand, onClose, onUpdate }) => {
 };
 
 // --- 一覧画面 ---
+// 一覧のタブ（表示上の分類のみ。不採用・辞退になっても is_deleted などの値は変更しない）
+// 従来の「退職・削除済」（論理削除・退職）は終了・削除済タブに含め、復元・完全消去の操作も従来どおりその行だけに出す。
+const LIST_TABS = [
+  { id: "active", label: "進行中" },
+  { id: "joined", label: "入社済" },
+  { id: "ended", label: "終了・削除済" },
+  { id: "coop", label: "協力業者" },
+];
+const retiredOn = (c) => {
+  if (!c.retirement_date) return null;
+  const d = new Date(c.retirement_date);
+  d.setHours(0, 0, 0, 0);
+  return Number.isFinite(d.getTime()) ? d : null;
+};
+const isArchivedRow = (c, today) => {
+  const ret = retiredOn(c);
+  return Boolean(c.is_deleted || c.is_retired || (ret && ret <= today));
+};
+const listTab = (c, today) => {
+  if (isArchivedRow(c, today)) return "ended";
+  if (c.is_coop) return "coop";
+  const st = String(c.status);
+  if (st === "9") return "ended";
+  if (st === "6") return "joined";
+  return "active";
+};
+// 氏名（漢字・かな）・会社名。空白（全角を含む）の有無・英字の大小は区別しない
+const searchKey = (v) => String(v ?? "").toLowerCase().replace(/\s+/g, "");
+const matchesSearch = (c, q) => {
+  const key = searchKey(q);
+  return !key || [c.name_kanji, c.name_kana, c.company_name].some((v) => searchKey(v).includes(key));
+};
+const slashDate = (d) => (d ? `${d.slice(0, 4)}/${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : "");
+
 const CandidateList = () => {
   const [cands, setCands] = useState([]);
   const [ld, setLd] = useState(true);
@@ -2721,10 +2755,10 @@ const CandidateList = () => {
   // 個人応募の「更新」は共通の選考更新モーダル（協力業者・DB適用前は従来の進捗モーダル）
   const [selMod, setSelMod] = useState(null);
   const openUpdate = (c) => (c.is_coop ? setProgMod(c) : setSelMod(c));
-  const tdMid = { ...s.td, verticalAlign: "middle" };
+  const thList = { ...s.th, padding: "8px 10px" };
+  const tdMid = { ...s.td, padding: "6px 10px", verticalAlign: "middle" };
 
-  // 表示モード管理: 'all' (すべて), 'indiv' (個人), 'coop' (協力業者), 'archive' (退職・削除済)
-  const [viewMode, setViewMode] = useState("all"); // ★デフォルトをすべてに変更
+  const [viewMode, setViewMode] = useState("active");
 
   const nav = useNavigate();
 
@@ -2783,28 +2817,10 @@ const CandidateList = () => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // --- フィルタリングロジック ---
-  let filt = cands.filter((c) => {
-    const retDate = c.retirement_date ? new Date(c.retirement_date) : null;
-    if (retDate) retDate.setHours(0, 0, 0, 0);
-    const isPastRetirement = retDate && retDate <= today;
-    const isArchived = c.is_deleted || isPastRetirement || c.is_retired;
-
-    // アーカイブモードならアーカイブのみ表示
-    if (viewMode === "archive") return isArchived;
-
-    // それ以外のモードではアーカイブ（退職・削除済）は一律非表示
-    if (isArchived) return false;
-
-    if (viewMode === "indiv") return !c.is_coop;
-    if (viewMode === "coop") return c.is_coop;
-    return true; // 'all' の場合
-  });
-
-  if (q)
-    filt = filt.filter(
-      (c) => c.name_kanji?.includes(q) || c.name_kana?.includes(q),
-    );
+  // 検索は全タブに適用し、各タブの件数に該当件数を表示する
+  const hits = cands.filter((c) => matchesSearch(c, q));
+  const tabCount = (id) => hits.filter((c) => listTab(c, today) === id).length;
+  const filt = hits.filter((c) => listTab(c, today) === viewMode);
 
   filt.sort((a, b) => {
     const A = a[sort.key];
@@ -2814,131 +2830,78 @@ const CandidateList = () => {
     return 0;
   });
 
+  // 連絡先：バッジを上段、電話番号・アドレスを下段
   const renderContact = (c) => {
     const isE = c.primary_contact?.startsWith("email");
     const idx = parseInt(c.primary_contact?.split("_")[1] || 0);
     if (isE && c.email && c.email[idx])
       return (
-        <div>
-          <span style={{ ...s.badge, background: "#ede9fe", color: "#8b5cf6" }}>
-            ✉
-          </span>{" "}
-          <a
-            href={`mailto:${c.email[idx]}`}
-            style={{ color: thm.txt, textDecoration: "none" }}
-          >
+        <div className="nks-contact">
+          <span className="nks-contact-badge is-mail">メール</span>
+          <a href={`mailto:${c.email[idx]}`} className="nks-contact-value">
             {c.email[idx]}
           </a>
         </div>
       );
     if (c.tel && c.tel[idx])
       return (
-        <div>
-          <span style={{ ...s.badge, background: "#d1fae5", color: "#059669" }}>
-            TEL
-          </span>{" "}
-          {c.tel[idx]}
+        <div className="nks-contact">
+          <span className="nks-contact-badge is-tel">TEL</span>
+          <span className="nks-contact-value">{c.tel[idx]}</span>
         </div>
       );
     return <span>-</span>;
   };
 
+  // 終了・削除済タブの補足（終了理由・終了日。日付が分からない場合は推測しない）
+  const renderEndNote = (c) => {
+    const notes = [];
+    if (c.is_deleted) notes.push(<span key="del" className="nks-end-tag">削除済</span>);
+    if (String(c.status) === "9" && !c.is_coop) {
+      notes.push(
+        <span key="date" className="nks-end-date">
+          {c.selection_ended_date ? `終了日 ${slashDate(c.selection_ended_date)}` : "終了日不明"}
+        </span>,
+      );
+      if (c.decline_reason) notes.push(<span key="reason" className="nks-end-reason" title={c.decline_reason}>{c.decline_reason}</span>);
+    }
+    return notes.length ? <div className="nks-end-note">{notes}</div> : null;
+  };
+
   return (
     <div style={s.main}>
-      <div style={{ maxWidth: "1000px", margin: "0 auto" }}>
-        {/* ヘッダー固定 */}
-        <div
-          style={{
-            position: "sticky",
-            top: 0,
-            backgroundColor: thm.bg,
-            zIndex: 10,
-            paddingBottom: "16px",
-            paddingTop: "20px",
-            marginTop: "-20px",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <h2 style={{ fontSize: "24px", margin: 0 }}>応募者一覧</h2>
-
-            <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
-              {/* 表示切替タブ */}
-              <div
-                style={{
-                  display: "flex",
-                  background: "#e2e8f0",
-                  padding: "4px",
-                  borderRadius: "8px",
-                  gap: "4px",
-                }}
+      <div style={{ maxWidth: "1100px" }}>
+        {/* ヘッダー固定：見出し・タブ・検索・新規登録を左寄せで1段に集約 */}
+        <div className="nks-list-head" style={{ backgroundColor: thm.bg }}>
+          <h2>応募者一覧</h2>
+          <div className="nks-list-tabs" role="tablist">
+            {LIST_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={viewMode === tab.id}
+                className={viewMode === tab.id ? "is-active" : ""}
+                onClick={() => setViewMode(tab.id)}
               >
-                {[
-                  { id: "all", label: "すべて" },
-                  { id: "indiv", label: "個人応募" },
-                  { id: "coop", label: "協力業者" },
-                  { id: "archive", label: "退職・削除済" },
-                ].map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setViewMode(tab.id)}
-                    style={{
-                      border: "none",
-                      padding: "6px 12px",
-                      borderRadius: "6px",
-                      fontSize: "13px",
-                      fontWeight: "bold",
-                      cursor: "pointer",
-                      backgroundColor:
-                        viewMode === tab.id ? "#fff" : "transparent",
-                      color: viewMode === tab.id ? thm.pri : thm.mut,
-                      boxShadow:
-                        viewMode === tab.id
-                          ? "0 1px 3px rgba(0,0,0,0.1)"
-                          : "none",
-                      transition: "0.2s",
-                    }}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-
-              <input
-                type="text"
-                placeholder="氏名・会社名検索..."
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                style={{ ...s.inp, width: "180px" }}
-              />
-              <Link
-                to="/register"
-                style={{
-                  ...s.btn,
-                  textDecoration: "none",
-                  padding: "10px 16px",
-                }}
-              >
-                新規登録
-              </Link>
-            </div>
+                {tab.label}
+                <span className="nks-list-tab-count">{tabCount(tab.id)}</span>
+              </button>
+            ))}
           </div>
+          <input
+            type="search"
+            placeholder="氏名・会社名で検索（全タブ）"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            className="nks-list-search"
+          />
+          <Link to="/register" className="nks-list-new">
+            新規登録
+          </Link>
         </div>
 
-        <div
-          style={{
-            backgroundColor: thm.crd,
-            borderRadius: "8px",
-            padding: "30px",
-            border: `1px solid ${thm.brd}`,
-            marginBottom: "24px",
-          }}
-        >
+        <div className="nks-list-card">
           {ld ? (
             <p>読込中...</p>
           ) : (
@@ -2946,53 +2909,45 @@ const CandidateList = () => {
               <table style={s.tbl}>
                 <thead>
                   <tr>
-                    <th style={{ ...s.th, width: "60px" }}>詳細</th>
-                    <th style={s.th} onClick={() => reqSort("applied_at")}>
+                    <th style={{ ...thList, width: "60px" }}>詳細</th>
+                    <th style={thList} onClick={() => reqSort("applied_at")}>
                       受付日{" "}
                       {sort.key === "applied_at" &&
                         (sort.dir === "asc" ? "▲" : "▼")}
                     </th>
                     <th
-                      style={{ ...s.th, minWidth: "180px" }}
+                      style={{ ...thList, minWidth: "180px" }}
                       onClick={() => reqSort("name_kana")}
                     >
                       氏名 / 会社名{" "}
                       {sort.key === "name_kana" &&
                         (sort.dir === "asc" ? "▲" : "▼")}
                     </th>
-                    <th style={s.th} onClick={() => reqSort("age")}>
+                    <th style={thList} onClick={() => reqSort("age")}>
                       年齢{" "}
                       {sort.key === "age" && (sort.dir === "asc" ? "▲" : "▼")}
                     </th>
-                    <th style={s.th}>連絡先</th>
-                    <th style={s.th} onClick={() => reqSort("status")}>
+                    <th style={thList}>連絡先</th>
+                    <th style={thList} onClick={() => reqSort("status")}>
                       進捗{" "}
                       {sort.key === "status" &&
                         (sort.dir === "asc" ? "▲" : "▼")}
                     </th>
-                    <th style={{ ...s.th, width: "80px" }}>操作</th>
+                    <th style={{ ...thList, width: "80px" }}>操作</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filt.map((c) => {
-                    const retDate = c.retirement_date
-                      ? new Date(c.retirement_date)
-                      : null;
-                    if (retDate) retDate.setHours(0, 0, 0, 0);
-
-                    const rowBg = c.is_coop
-                      ? "#f0f9ff"
-                      : viewMode === "archive"
-                        ? "#f8fafc"
-                        : "transparent";
+                    const ret = retiredOn(c);
+                    const archived = isArchivedRow(c, today);
+                    const retired = c.is_retired || (ret && ret <= today);
+                    const ended = viewMode === "ended";
 
                     return (
                       <tr
                         key={c.id}
-                        style={{
-                          backgroundColor: rowBg,
-                          opacity: viewMode === "archive" ? 0.7 : 1,
-                        }}
+                        className={ended ? "nks-row-ended" : undefined}
+                        style={{ backgroundColor: c.is_coop ? "#f0f9ff" : "transparent" }}
                       >
                         <td style={tdMid}>
                           <button
@@ -3016,6 +2971,7 @@ const CandidateList = () => {
                               </span>
                               <span style={{ fontSize: "11px", color: thm.mut }}>
                                 {c.name_kana}
+                                {c.is_coop && c.company_name ? ` ／ ${c.company_name}` : ""}
                               </span>
                             </div>
                             {!c.is_coop && (
@@ -3039,21 +2995,22 @@ const CandidateList = () => {
                         <td style={tdMid}>{renderContact(c)}</td>
                         <td style={tdMid}>
                           <div className="nks-list-cell">
-                            {c.is_retired ? (
-                              <div className="nks-list-cell-main">
+                            <div className="nks-list-cell-main">
+                              {retired ? (
                                 <span
                                   style={{
                                     ...s.badge,
                                     background: "#fef2f2",
                                     color: thm.dng,
                                   }}
-                                >{`${retDate?.getMonth() + 1}月${retDate?.getDate()}日退職済`}</span>
-                              </div>
-                            ) : (
-                              <ProgressStatus candidate={c} s={s} thm={thm} />
-                            )}
+                                >{ret ? `${ret.getMonth() + 1}月${ret.getDate()}日退職済` : "退職済"}</span>
+                              ) : (
+                                <ProgressStatus candidate={c} s={s} thm={thm} />
+                              )}
+                              {ended && renderEndNote(c)}
+                            </div>
                             {/* 更新できない行も同じ幅を確保し、バッジ・ボタンの位置を揃える */}
-                            {viewMode !== "archive" && String(c.status) !== "6" ? (
+                            {!archived && String(c.status) !== "6" ? (
                               <button
                                 type="button"
                                 onClick={() => openUpdate(c)}
@@ -3067,7 +3024,7 @@ const CandidateList = () => {
                           </div>
                         </td>
                         <td style={tdMid}>
-                          {viewMode === "archive" ? (
+                          {archived ? (
                             <div className="nks-list-buttons">
                               <button
                                 type="button"
@@ -3102,12 +3059,12 @@ const CandidateList = () => {
                       <td
                         colSpan="7"
                         style={{
-                          padding: "30px",
+                          padding: "24px",
                           textAlign: "center",
                           color: thm.mut,
                         }}
                       >
-                        データがありません
+                        {q ? "このタブに該当する応募者はいません（他のタブの件数を確認してください）" : "データがありません"}
                       </td>
                     </tr>
                   )}
@@ -3585,1023 +3542,6 @@ const RegistrationForm = () => {
 };
 
 // --- ダッシュボード画面 (統合版・A4印刷対応) ---
-const Dashboard = () => {
-  const [cands, setCands] = useState([]);
-  const [exps, setExps] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    Promise.all([
-      apiFetch("/api/candidates").then((res) => res.json()),
-      apiFetch("/api/expenses").then((res) => res.json()),
-    ])
-      .then(([candData, expData]) => {
-        setCands(candData);
-        setExps(expData);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error(err);
-        setLoading(false);
-      });
-  }, []);
-
-  const monthsInPeriod = React.useMemo(() => {
-    const list = [];
-    const today = new Date();
-    const currentYear = today.getFullYear();
-    const currentMonth = today.getMonth() + 1;
-    let startYear = currentMonth >= 8 ? currentYear : currentYear - 1;
-
-    let y = startYear;
-    let m = 8;
-    while (true) {
-      list.push({
-        y,
-        m,
-        key: `${y}-${String(m).padStart(2, "0")}`,
-        label: `${y}/${m}`,
-      });
-      if (y === currentYear && m === currentMonth) break;
-      m++;
-      if (m > 12) {
-        m = 1;
-        y++;
-      }
-    }
-    return list;
-  }, []);
-
-  if (loading) return <div style={s.main}>読み込み中...</div>;
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  // 【滞留用】有効なデータのみ。入社予定日が過去の人は滞留から外す
-  const activeCands = cands.filter((c) => {
-    if (c.is_deleted || c.is_retired) return false;
-    const st = String(c.status);
-    if (st === "6" && c.expected_join_date) {
-      const joinDate = new Date(c.expected_join_date);
-      joinDate.setHours(0, 0, 0, 0);
-      return joinDate > today; // 未来ならまだ滞留（入社前）
-    }
-    return ["1", "2", "3", "4", "5"].includes(st);
-  });
-
-  const totalActive = activeCands.filter((c) => !c.is_coop).length;
-  const inProgress = activeCands.filter(
-    (c) => !c.is_coop && ["1", "2", "3", "4"].includes(String(c.status)),
-  ).length;
-  const hiredOrOffer = activeCands.filter(
-    (c) => !c.is_coop && ["5", "6"].includes(String(c.status)),
-  ).length;
-
-  // 累計の不採用・辞退者は、削除済みデータも含めて全件からカウント！
-  const declined = cands.filter(
-    (c) => !c.is_coop && String(c.status) === "9",
-  ).length;
-
-  // 選考パイプライン（個人応募のみ・滞留状況）
-  const pipeline = [
-    {
-      id: "1",
-      label: "受付",
-      count: activeCands.filter((c) => !c.is_coop && String(c.status) === "1")
-        .length,
-      color: "#94a3b8",
-    },
-    {
-      id: "2",
-      label: "面接打診中",
-      count: activeCands.filter((c) => !c.is_coop && String(c.status) === "2")
-        .length,
-      color: "#f97316",
-    },
-    {
-      id: "3",
-      label: "1次面接予定",
-      count: activeCands.filter((c) => !c.is_coop && String(c.status) === "3")
-        .length,
-      color: "#22c55e",
-    },
-    {
-      id: "4",
-      label: "2次面接予定",
-      count: activeCands.filter((c) => !c.is_coop && String(c.status) === "4")
-        .length,
-      color: "#10b981",
-    },
-    {
-      id: "5",
-      label: "内定",
-      count: activeCands.filter((c) => !c.is_coop && String(c.status) === "5")
-        .length,
-      color: "#3b82f6",
-    },
-    {
-      id: "6",
-      label: "入社前",
-      count: activeCands.filter((c) => !c.is_coop && String(c.status) === "6")
-        .length,
-      color: "#8b5cf6",
-    },
-  ];
-  const maxPipeline = Math.max(...pipeline.map((p) => p.count), 1);
-
-  // 直近の入社予定（個人応募のみ）
-  const upcomingJoins = getPlannedJoiners(cands, calendarDate()).slice(0, 3);
-
-  // ★統計処理: イベント発生ベースで集計する（削除データも含む）
-  const monthlyStats = monthsInPeriod.map((mon) => {
-    // 1. 応募数（その月にapplied_atがある）
-    const appCands = cands.filter((c) => {
-      if (!c.applied_at) return false;
-      const d = new Date(c.applied_at);
-      return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
-    });
-
-    // 2. 面接数（その月にinterview_1_dateがある）
-    const intCands = cands.filter((c) => {
-      if (!c.interview_1_date) return false;
-      const d = new Date(c.interview_1_date);
-      return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
-    });
-
-    // 3. 内定数（ステータス5以上で、その月にexpected_join_dateがある）
-    const offerCands = cands.filter((c) => {
-      if (!["5", "6"].includes(String(c.status)) || !c.expected_join_date)
-        return false;
-      const d = new Date(c.expected_join_date);
-      return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
-    });
-
-    // 4. 入社数（ステータス6で、その月にexpected_join_dateがある）
-    const joinCands = cands.filter((c) => {
-      if (String(c.status) !== "6" || !c.expected_join_date) return false;
-      const d = new Date(c.expected_join_date);
-      return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
-    });
-
-    const countTotal = appCands.length;
-    const coops = appCands.filter((c) => c.is_coop).length;
-    const countIndiv = countTotal - coops;
-
-    const interviews = intCands.filter((c) => !c.is_coop).length;
-    const offers = offerCands.filter((c) => !c.is_coop).length;
-    const joins = joinCands.filter((c) => !c.is_coop).length;
-
-    // 辞退数は日付データがないため、応募月ベースの参考値として算出
-    const declinesCount = cands.filter((c) => {
-      if (String(c.status) !== "9" || c.is_coop || !c.applied_at) return false;
-      const d = new Date(c.applied_at);
-      return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
-    }).length;
-
-    const expense = exps
-      .filter((e) => {
-        const d = new Date(e.expense_date);
-        return d.getFullYear() === mon.y && d.getMonth() + 1 === mon.m;
-      })
-      .reduce((sum, e) => sum + e.amount, 0);
-
-    return {
-      ...mon,
-      countTotal,
-      countIndiv,
-      coops,
-      interviews,
-      offers,
-      joins,
-      declinesCount,
-      expense,
-      interviewRate: countIndiv
-        ? Math.round((interviews / countIndiv) * 100)
-        : 0,
-      hireRate: countIndiv ? Math.round((offers / countIndiv) * 100) : 0,
-    };
-  });
-
-  const totalPeriodCands = monthlyStats.reduce(
-    (sum, m) => sum + m.countTotal,
-    0,
-  );
-  const totalPeriodCoops = monthlyStats.reduce((sum, m) => sum + m.coops, 0);
-  const totalPeriodIndivs = totalPeriodCands - totalPeriodCoops;
-
-  const totalPeriodInterviews = monthlyStats.reduce(
-    (sum, m) => sum + m.interviews,
-    0,
-  );
-  const totalPeriodOffers = monthlyStats.reduce((sum, m) => sum + m.offers, 0);
-  const totalPeriodJoins = monthlyStats.reduce((sum, m) => sum + m.joins, 0);
-
-  const periodInterviewRate = totalPeriodIndivs
-    ? Math.round((totalPeriodInterviews / totalPeriodIndivs) * 100)
-    : 0;
-  const periodOfferRate = totalPeriodIndivs
-    ? Math.round((totalPeriodOffers / totalPeriodIndivs) * 100)
-    : 0;
-  const periodJoinRate = totalPeriodIndivs
-    ? Math.round((totalPeriodJoins / totalPeriodIndivs) * 100)
-    : 0;
-
-  const totalExpPeriod = monthlyStats.reduce((sum, m) => sum + m.expense, 0);
-  const costPerHire =
-    totalPeriodOffers > 0 ? Math.round(totalExpPeriod / totalPeriodOffers) : 0;
-
-  const chartMaxVal = Math.max(
-    ...monthlyStats.map((m) => Math.max(m.countIndiv, m.coops, m.interviews)),
-    1,
-  );
-
-  const yTicks = [];
-  const step = Math.ceil(chartMaxVal / 4) || 1;
-  for (let i = 0; i <= chartMaxVal; i += step) {
-    if (!yTicks.includes(i)) yTicks.push(i);
-  }
-  if (!yTicks.includes(chartMaxVal)) yTicks.push(chartMaxVal);
-
-  const generateWavyLinePath = () => {
-    if (monthlyStats.length === 0) return "";
-    const points = monthlyStats.map((m, i) => {
-      const x = ((i + 0.5) / monthlyStats.length) * 100;
-      const y = 100 - (m.joins / chartMaxVal) * 100;
-      return { x, y };
-    });
-    let path = `M ${points[0].x} ${points[0].y} `;
-    for (let i = 0; i < points.length - 1; i++) {
-      const curr = points[i];
-      const next = points[i + 1];
-      const midX = (curr.x + next.x) / 2;
-      path += `C ${midX} ${curr.y}, ${midX} ${next.y}, ${next.x} ${next.y} `;
-    }
-    return path;
-  };
-
-  return (
-    <div style={s.main} className="dashboard-container">
-      <div style={{ maxWidth: "1200px", margin: "0 auto 12px", display: "flex", gap: "20px", alignItems: "center", flexWrap: "wrap", padding: "10px 0", borderBottom: `1px solid ${thm.brd}` }}>
-        <strong>当月実績 {calendarDate().slice(0, 7).replace("-", "/")}</strong>
-        {loading ? <span>読み込み中</span> : (() => {
-          const { monthly } = buildHrSummary(cands);
-          return <><span>受付 {monthly.received}名</span><span>面接 {monthly.interviews}件</span><span>内定 {monthly.offers}名</span></>;
-        })()}
-      </div>
-      <style>{`
-        @media print {
-          @page { size: A4 portrait; margin: 10mm; }
-          nav { display: none !important; }
-          .print-hide { display: none !important; }
-          .dashboard-container { padding: 0 !important; overflow: visible !important; zoom: 0.6; }
-          .s-card { page-break-inside: avoid; margin-bottom: 10px !important; padding: 16px !important; }
-          table th, table td { padding: 4px 6px !important; font-size: 11px !important; }
-          .chart-container { height: 180px !important; margin-bottom: 70px !important; }
-          body { background: white !important; }
-          * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-        }
-      `}</style>
-
-      <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
-        <div
-          className="print-hide"
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-            marginBottom: "16px",
-          }}
-        >
-          <button
-            onClick={() => window.print()}
-            style={{
-              ...s.actBtn,
-              border: `1px solid ${thm.mut}`,
-              padding: "8px 16px",
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-            }}
-          >
-            <svg
-              width="16"
-              height="16"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"
-              />
-            </svg>
-            A4印刷
-          </button>
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: "20px",
-            marginBottom: "20px",
-          }}
-        >
-          {[
-            {
-              title: "現在の有効応募 (個人滞留)",
-              value: totalActive,
-              color: thm.txt,
-            },
-            {
-              title: "選考進行中 (個人滞留)",
-              value: inProgress,
-              color: thm.pri,
-            },
-            {
-              title: "内定・入社 (個人滞留)",
-              value: hiredOrOffer,
-              color: "#16a34a",
-            },
-            {
-              title: "不採用・辞退 (累計全件)",
-              value: declined,
-              color: thm.dng,
-            },
-          ].map((kpi, i) => (
-            <div
-              key={i}
-              className="s-card"
-              style={{ ...s.card, padding: "20px", marginBottom: 0 }}
-            >
-              <div
-                style={{
-                  fontSize: "12px",
-                  color: thm.mut,
-                  fontWeight: "bold",
-                  marginBottom: "4px",
-                }}
-              >
-                {kpi.title}
-              </div>
-              <div
-                style={{
-                  fontSize: "28px",
-                  fontWeight: "bold",
-                  color: kpi.color,
-                  lineHeight: 1,
-                }}
-              >
-                {kpi.value}{" "}
-                <span style={{ fontSize: "14px", color: thm.mut }}>名</span>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
-            gap: "20px",
-            marginBottom: "30px",
-          }}
-        >
-          <div
-            className="s-card"
-            style={{
-              ...s.card,
-              padding: "20px",
-              marginBottom: 0,
-              backgroundColor: "#f8fafc",
-            }}
-          >
-            <div
-              style={{
-                fontSize: "12px",
-                color: thm.mut,
-                fontWeight: "bold",
-                marginBottom: "4px",
-              }}
-            >
-              今期 採用人数 (内定含)
-            </div>
-            <div
-              style={{ fontSize: "24px", fontWeight: "bold", color: thm.txt }}
-            >
-              {totalPeriodOffers}{" "}
-              <span style={{ fontSize: "14px", color: thm.mut }}>名</span>
-            </div>
-          </div>
-          <div
-            className="s-card"
-            style={{
-              ...s.card,
-              padding: "20px",
-              marginBottom: 0,
-              backgroundColor: "#f8fafc",
-            }}
-          >
-            <div
-              style={{
-                fontSize: "12px",
-                color: thm.mut,
-                fontWeight: "bold",
-                marginBottom: "4px",
-              }}
-            >
-              今期 採用経費
-            </div>
-            <div
-              style={{ fontSize: "24px", fontWeight: "bold", color: thm.txt }}
-            >
-              ¥{totalExpPeriod.toLocaleString()}
-            </div>
-          </div>
-          <div
-            className="s-card"
-            style={{
-              ...s.card,
-              padding: "20px",
-              marginBottom: 0,
-              border: `2px solid ${thm.pri}`,
-            }}
-          >
-            <div
-              style={{
-                fontSize: "12px",
-                color: thm.pri,
-                fontWeight: "bold",
-                marginBottom: "4px",
-              }}
-            >
-              一人当たり採用単価
-            </div>
-            <div
-              style={{ fontSize: "28px", fontWeight: "bold", color: thm.pri }}
-            >
-              ¥{costPerHire.toLocaleString()}
-            </div>
-          </div>
-        </div>
-
-        <div
-          className="s-card"
-          style={{
-            ...s.card,
-            padding: "20px 24px",
-            marginBottom: "24px",
-            backgroundColor: "#f1f5f9",
-            borderLeft: `4px solid ${thm.pri}`,
-          }}
-        >
-          <h3
-            style={{ margin: "0 0 16px 0", fontSize: "15px", color: thm.txt }}
-          >
-            【{monthsInPeriod[0]?.y}/08～ 期】 累計実績
-          </h3>
-          <div style={{ display: "flex", gap: "40px", flexWrap: "wrap" }}>
-            <div>
-              <div
-                style={{
-                  fontSize: "12px",
-                  color: thm.mut,
-                  marginBottom: "4px",
-                }}
-              >
-                全応募数
-              </div>
-              <strong style={{ fontSize: "28px" }}>{totalPeriodCands}</strong>
-              <span style={{ fontSize: "14px", color: thm.mut }}>名</span>
-            </div>
-            <div>
-              <div
-                style={{
-                  fontSize: "12px",
-                  color: "#475569",
-                  marginBottom: "4px",
-                }}
-              >
-                協力業者
-              </div>
-              <strong style={{ fontSize: "28px", color: "#475569" }}>
-                {totalPeriodCoops}
-              </strong>
-              <span style={{ fontSize: "14px", color: thm.mut }}>件</span>
-            </div>
-            <div>
-              <div
-                style={{
-                  fontSize: "12px",
-                  color: thm.mut,
-                  marginBottom: "4px",
-                }}
-              >
-                面接実績 (個人)
-              </div>
-              <strong style={{ fontSize: "28px" }}>
-                {totalPeriodInterviews}
-              </strong>
-              <span style={{ fontSize: "14px", color: thm.mut }}>
-                名 ({periodInterviewRate}%)
-              </span>
-            </div>
-            <div>
-              <div
-                style={{
-                  fontSize: "12px",
-                  color: thm.mut,
-                  marginBottom: "4px",
-                }}
-              >
-                内定実績 (個人)
-              </div>
-              <strong style={{ fontSize: "28px", color: "#ef4444" }}>
-                {totalPeriodOffers}
-              </strong>
-              <span style={{ fontSize: "14px", color: thm.mut }}>
-                名 ({periodOfferRate}%)
-              </span>
-            </div>
-            <div>
-              <div
-                style={{
-                  fontSize: "12px",
-                  color: thm.mut,
-                  marginBottom: "4px",
-                }}
-              >
-                入社実績 (個人)
-              </div>
-              <strong style={{ fontSize: "28px", color: "#8b4513" }}>
-                {totalPeriodJoins}
-              </strong>
-              <span style={{ fontSize: "14px", color: thm.mut }}>
-                名 ({periodJoinRate}%)
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "2fr 1fr",
-            gap: "24px",
-            alignItems: "start",
-            marginBottom: "24px",
-          }}
-        >
-          <div className="s-card" style={{ ...s.card, marginBottom: 0 }}>
-            <h3
-              style={{
-                margin: "0 0 16px 0",
-                fontSize: "15px",
-                borderBottom: `1px solid ${thm.brd}`,
-                paddingBottom: "8px",
-              }}
-            >
-              選考パイプライン（個人応募の滞留状況）
-            </h3>
-            <div>
-              {pipeline.map((step) => (
-                <div
-                  key={step.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    marginBottom: "12px",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: "90px",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                      color: thm.txt,
-                    }}
-                  >
-                    {step.label}
-                  </div>
-                  <div
-                    style={{
-                      flex: 1,
-                      backgroundColor: "#f1f5f9",
-                      height: "20px",
-                      borderRadius: "10px",
-                      overflow: "hidden",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${(step.count / maxPipeline) * 100}%`,
-                        backgroundColor: step.color,
-                        height: "100%",
-                      }}
-                    ></div>
-                  </div>
-                  <div
-                    style={{
-                      width: "40px",
-                      textAlign: "right",
-                      fontSize: "13px",
-                      fontWeight: "bold",
-                    }}
-                  >
-                    {step.count}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div
-            className="s-card"
-            style={{ ...s.card, marginBottom: 0, padding: "0" }}
-          >
-            <div
-              style={{ padding: "16px", borderBottom: `1px solid ${thm.brd}` }}
-            >
-              <h3 style={{ margin: 0, fontSize: "15px" }}>
-                直近の入社予定 (個人)
-              </h3>
-            </div>
-            <div style={{ padding: "8px 16px 16px 16px" }}>
-              {upcomingJoins.length > 0 ? (
-                upcomingJoins.map((c) => {
-                  const joinDate = new Date(c.expected_join_date);
-                  return (
-                    <div
-                      key={c.id}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        padding: "10px 0",
-                        borderBottom: `1px dashed ${thm.brd}`,
-                      }}
-                    >
-                      <div>
-                        <div
-                          style={{
-                            fontSize: "13px",
-                            fontWeight: "bold",
-                            cursor: "pointer",
-                            color: thm.pri,
-                          }}
-                          onClick={() => navigate(`/candidates/${c.id}`)}
-                        >
-                          {c.name_kanji}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: "11px",
-                            color: thm.mut,
-                            marginTop: "2px",
-                          }}
-                        >
-                          予定日: {joinDate.toLocaleDateString("ja-JP")}
-                          <div style={{ marginTop: "2px" }}>{[c.planned_department, c.job_title, c.employment_type].filter(Boolean).join(" ／ ") || "—"}</div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <div
-                  style={{
-                    fontSize: "12px",
-                    color: thm.mut,
-                    textAlign: "center",
-                    padding: "16px 0",
-                  }}
-                >
-                  なし
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="s-card" style={{ ...s.card, paddingBottom: "40px" }}>
-          <h3 style={{ margin: "0 0 20px 0", fontSize: "16px" }}>
-            月別実績推移 ({monthsInPeriod[0]?.y}/08～ 期)
-          </h3>
-
-          <div
-            className="chart-container"
-            style={{
-              position: "relative",
-              height: "240px",
-              borderLeft: `1px solid ${thm.brd}`,
-              marginBottom: "80px",
-              marginTop: "30px",
-              marginLeft: "30px",
-            }}
-          >
-            <div
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                pointerEvents: "none",
-              }}
-            >
-              {yTicks.map((t) => (
-                <div
-                  key={`tick-${t}`}
-                  style={{
-                    position: "absolute",
-                    bottom: `${(t / chartMaxVal) * 100}%`,
-                    left: 0,
-                    right: 0,
-                    borderBottom:
-                      t > 0 ? `1px dashed #cbd5e1` : `1px solid #94a3b8`,
-                  }}
-                >
-                  <span
-                    style={{
-                      position: "absolute",
-                      left: "-25px",
-                      bottom: "-8px",
-                      fontSize: "11px",
-                      color: thm.mut,
-                    }}
-                  >
-                    {t}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            <svg
-              viewBox="0 0 100 100"
-              preserveAspectRatio="none"
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                height: "100%",
-                zIndex: 10,
-                pointerEvents: "none",
-                overflow: "visible",
-              }}
-            >
-              <path
-                d={generateWavyLinePath()}
-                fill="none"
-                stroke="#8b4513"
-                strokeWidth="2"
-                vectorEffect="non-scaling-stroke"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-
-            <div
-              style={{
-                display: "flex",
-                alignItems: "flex-end",
-                height: "100%",
-                width: "100%",
-                position: "relative",
-              }}
-            >
-              {monthlyStats.map((m) => (
-                <div
-                  key={m.key}
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    height: "100%",
-                    position: "relative",
-                  }}
-                >
-                  <div
-                    style={{
-                      position: "relative",
-                      width: "80%",
-                      height: "100%",
-                      display: "flex",
-                      alignItems: "flex-end",
-                      justifyContent: "center",
-                      gap: "2px",
-                    }}
-                  >
-                    {/* ★ 個人応募バー (薄いグレー) */}
-                    <div
-                      style={{
-                        width: "30%",
-                        height: `${(m.countIndiv / chartMaxVal) * 100}%`,
-                        background: "#cbd5e1",
-                        borderRadius: "2px 2px 0 0",
-                      }}
-                    ></div>
-
-                    {/* ★ 協力業者バー (濃いグレー) */}
-                    <div
-                      style={{
-                        width: "30%",
-                        height: `${(m.coops / chartMaxVal) * 100}%`,
-                        background: "#475569",
-                        borderRadius: "2px 2px 0 0",
-                      }}
-                    ></div>
-
-                    {/* 面接・内定は個人応募のバーに重ねる */}
-                    <div
-                      style={{
-                        position: "absolute",
-                        bottom: 0,
-                        left: "10%",
-                        width: "20%",
-                        height: `${(m.interviews / chartMaxVal) * 100}%`,
-                        background: "#3b82f6",
-                        borderRadius: "2px 2px 0 0",
-                        opacity: 0.8,
-                      }}
-                    ></div>
-                    <div
-                      style={{
-                        position: "absolute",
-                        bottom: 0,
-                        left: "10%",
-                        width: "20%",
-                        height: `${(m.offers / chartMaxVal) * 100}%`,
-                        background: "#ef4444",
-                        borderRadius: "2px 2px 0 0",
-                        opacity: 0.8,
-                      }}
-                    ></div>
-
-                    <div
-                      style={{
-                        position: "absolute",
-                        bottom: `${(m.joins / chartMaxVal) * 100}%`,
-                        width: "10px",
-                        height: "10px",
-                        backgroundColor: "#8b4513",
-                        borderRadius: "50%",
-                        border: "2px solid #fff",
-                        zIndex: 20,
-                        transform: "translateY(50%)",
-                      }}
-                    ></div>
-                  </div>
-
-                  <div
-                    style={{
-                      position: "absolute",
-                      bottom: "-55px",
-                      textAlign: "center",
-                      width: "100%",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: "13px",
-                        fontWeight: "bold",
-                        color: thm.txt,
-                      }}
-                    >
-                      {m.m}月
-                    </div>
-                    <div
-                      style={{
-                        fontSize: "11px",
-                        color: thm.mut,
-                        marginTop: "4px",
-                      }}
-                    >
-                      ¥{Math.round(m.expense / 1000)}k
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              gap: "24px",
-              marginTop: "20px",
-              fontSize: "13px",
-              justifyContent: "center",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <div
-                style={{
-                  width: "16px",
-                  height: "16px",
-                  background: "#cbd5e1",
-                  borderRadius: "2px",
-                }}
-              ></div>
-              個人応募
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <div
-                style={{
-                  width: "16px",
-                  height: "16px",
-                  background: "#475569",
-                  borderRadius: "2px",
-                }}
-              ></div>
-              協力業者
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <div
-                style={{
-                  width: "16px",
-                  height: "16px",
-                  background: "#3b82f6",
-                  borderRadius: "2px",
-                }}
-              ></div>
-              面接(個人)
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <div
-                style={{
-                  width: "16px",
-                  height: "16px",
-                  background: "#ef4444",
-                  borderRadius: "2px",
-                }}
-              ></div>
-              内定(個人)
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              <div
-                style={{
-                  width: "20px",
-                  height: "4px",
-                  background: "#8b4513",
-                  borderRadius: "2px",
-                }}
-              ></div>
-              入社(個人)
-            </div>
-          </div>
-        </div>
-
-        <div className="s-card" style={s.card}>
-          <h3 style={{ margin: "0 0 20px 0", fontSize: "16px" }}>
-            月別詳細実績
-          </h3>
-          <div style={s.tableContainer}>
-            <table style={s.tbl}>
-              <thead>
-                <tr>
-                  <th style={s.th}>月</th>
-                  <th style={s.th}>応募者 (個人)</th>
-                  <th style={s.th}>協力業者</th>
-                  <th style={s.th}>面接 (率)</th>
-                  <th style={s.th}>内定 (率)</th>
-                  <th style={s.th}>入社</th>
-                  <th style={s.th}>採用経費</th>
-                </tr>
-              </thead>
-              <tbody>
-                {monthlyStats.map((m) => (
-                  <tr key={m.key}>
-                    <td style={s.td}>{m.label}</td>
-                    <td style={s.td}>{m.countIndiv}名</td>
-                    <td style={s.td}>{m.coops}件</td>
-                    <td style={s.td}>
-                      {m.interviews}名{" "}
-                      <span style={{ color: thm.mut, fontSize: "11px" }}>
-                        ({m.interviewRate}%)
-                      </span>
-                    </td>
-                    <td style={s.td}>
-                      {m.offers}名{" "}
-                      <span style={{ color: thm.mut, fontSize: "11px" }}>
-                        ({m.hireRate}%)
-                      </span>
-                    </td>
-                    <td style={{ ...s.td, fontWeight: "bold" }}>{m.joins}名</td>
-                    <td style={s.td}>¥{m.expense.toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 // --- 採用経費入力画面 ---
 const ExpensePage = () => {
   const [exps, setExps] = useState([]);
