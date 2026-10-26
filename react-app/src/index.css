@@ -1,116 +1,63 @@
+/* NKS採用管理・共通UI（既存の入力操作を維持） */
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
-
-  --sans: system-ui, "Segoe UI", Roboto, sans-serif;
-  --heading: system-ui, "Segoe UI", Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
-
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", Meiryo, sans-serif;
+  color: #202c3d;
+  background: #f4f6fa;
+  color-scheme: light;
   font-synthesis: none;
-  text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
+  --nks-navy: #001a3d;
+  --nks-red: #e60012;
+  --nks-border: #dbe2ec;
+  --nks-ink: #202c3d;
+  --nks-muted: #64748b;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { margin: 0; padding: 0; width: 100%; height: 100%; }
+body { min-width: 320px; }
+h1, h2, h3, h4, h5 { color: var(--nks-ink); letter-spacing: -.02em; }
+button, input, select, textarea { font: inherit; }
+button { transition: background-color .14s ease, border-color .14s ease, box-shadow .14s ease; }
+button:not(:disabled) { cursor: pointer; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button:hover:not(:disabled) { filter: brightness(.96); }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible {
+  outline: 2px solid #315d99;
+  outline-offset: 2px;
+}
+input, select, textarea { color-scheme: light; }
+input[type="date"] { color: var(--nks-ink); background-color: #fff; min-height: 38px; }
+input[type="radio"], input[type="checkbox"] { accent-color: var(--nks-navy); width: 16px; height: 16px; vertical-align: middle; }
+input:disabled, select:disabled, textarea:disabled { background: #edf1f6 !important; }
+::placeholder { color: #8795a8; opacity: 1; }
+.nks-section-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom: 12px; }
+.nks-section-heading strong { font-size:14px; }
+.nks-source-detail { border:1px solid var(--nks-border); background:#f7f9fc; border-radius:10px; padding:16px; margin-bottom:18px; }
+.nks-source-fields { padding:0; }
+.nks-choice-group { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin: 8px 0 12px; }
+.nks-choice { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; border:1px solid var(--nks-border); border-radius:8px; background:#fff; padding:8px 12px; cursor:pointer; }
+.nks-choice:has(input:checked) { color:var(--nks-navy); border-color:#9bb4da; background:#edf3fb; }
+.nks-static-value { display:flex; flex-wrap:wrap; gap:12px; align-items:center; min-height:32px; font-size:14px; }
+.nks-static-value strong { border:1px solid var(--nks-border); padding:5px 10px; border-radius:6px; background:#fff; }
+.nks-inline-note { font-size:12px; color:var(--nks-muted); margin-top:6px; }
+.nks-secondary-fields { background:#f7f9fc; border:1px solid var(--nks-border); border-radius:10px; padding:14px 16px 2px; margin-bottom:18px; }
+.nks-secondary-title { font-weight:700; font-size:13px; margin-bottom:10px; }
+.nks-secondary-title span { color:var(--nks-muted); font-weight:400; }
+.nks-emergency { border:1px solid var(--nks-border); border-radius:10px; background:#fff; margin-bottom:24px; }
+.nks-emergency summary { padding:14px 18px; cursor:pointer; font-size:14px; color:var(--nks-ink); font-weight:700; }
+.nks-emergency summary span { font-size:12px; color:var(--nks-muted); font-weight:400; margin-left:6px; }
+.nks-emergency[open] summary { border-bottom:1px solid var(--nks-border); }
+.nks-emergency-body { padding:18px; }
+@media (max-width: 740px) {
+  .nks-choice { flex:1 1 auto; justify-content:center; }
+  .nks-emergency-body { padding:12px; }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
-}
-
-/* 👇 ここから修正部分（余白と幅の制限を解除） */
-html,
-body {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  height: 100vh;
-  overflow-x: hidden;
-}
-
-#root {
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  text-align: left;
-  box-sizing: border-box;
-}
-/* 👆 修正ここまで */
-
-/* 👇 以下、元のスタイルを維持（デグレード防止） */
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
-
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
-  margin: 0;
-}
-
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
-
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
-}
+.nks-auth { min-height:100vh; display:grid; place-items:center; padding:24px; background:linear-gradient(130deg,#eaf0f7,#f7f9fc 48%,#eef3f8); }
+.nks-auth-card { width:min(100%,390px); display:grid; gap:18px; padding:32px; background:#fff; border:1px solid var(--nks-border); border-radius:16px; box-shadow:0 14px 40px rgba(0,26,61,.08); }
+.nks-auth-brand { display:flex; flex-direction:column; gap:9px; color:var(--nks-navy); font-weight:800; font-size:20px; margin-bottom:4px; }
+.nks-auth-brand span { font-size:13px; letter-spacing:.16em; color:var(--nks-red); }
+.nks-auth-card label { display:grid; gap:8px; font-size:13px; font-weight:700; color:var(--nks-ink); }
+.nks-auth-card input { min-height:43px; padding:10px 12px; border:1px solid var(--nks-border); border-radius:8px; }
+.nks-auth-submit { border:0; color:#fff; background:var(--nks-navy); padding:12px; border-radius:8px; font-weight:700; }
+.nks-logout { border:1px solid #bac6d7; color:var(--nks-ink); background:#fff; border-radius:7px; padding:7px 12px; box-shadow:0 1px 5px rgba(0,26,61,.08); }

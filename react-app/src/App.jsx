@@ -12,6 +12,9 @@ import {
   useNavigate,
 } from "react-router-dom";
 import RecruitmentStats from "./RecruitmentStats";
+import SelectionModal from "./selection/SelectionModal";
+import SelectionTimeline from "./selection/SelectionTimeline";
+import { selectionApi, mirrorForForm, SELECTION_OWNED_FIELDS } from "./selection/selectionApi";
 
 // --- 入力フィルター ---
 const cleanText = (str) =>
@@ -165,14 +168,14 @@ const IcoMoney = () => (
   </svg>
 );
 const thm = {
-  bg: "#f8fafc",
-  side: "#1e293b",
+  bg: "#f4f6fa",
+  side: "#001a3d",
   crd: "#ffffff",
-  brd: "#cbd5e1",
-  txt: "#0f172a",
+  brd: "#dbe2ec",
+  txt: "#202c3d",
   mut: "#64748b",
-  pri: "#2563eb",
-  dng: "#ef4444",
+  pri: "#001a3d",
+  dng: "#e60012",
 };
 const s = {
   wrap: {
@@ -189,24 +192,25 @@ const s = {
     minWidth: 0,
     overflowY: "auto",
     overflowX: "hidden",
-    padding: "40px",
+    padding: "clamp(20px, 2.5vw, 34px)",
     position: "relative",
     boxSizing: "border-box",
   },
   card: {
     backgroundColor: thm.crd,
-    borderRadius: "8px",
-    padding: "30px",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+    borderRadius: "12px",
+    padding: "24px",
+    boxShadow: "0 2px 10px rgba(0,26,61,0.045)",
     border: `1px solid ${thm.brd}`,
     marginBottom: "24px",
     textAlign: "left",
   },
   inp: {
     width: "100%",
-    padding: "10px 12px",
+    padding: "9px 12px",
+    minHeight: "40px",
     border: `1px solid ${thm.brd}`,
-    borderRadius: "6px",
+    borderRadius: "8px",
     fontSize: "14px",
     outline: "none",
     backgroundColor: "#ffffff",
@@ -229,7 +233,7 @@ const s = {
     textAlign: "left",
   },
   btn: {
-    padding: "12px 24px",
+    padding: "10px 18px",
     background: thm.pri,
     color: "#fff",
     border: "none",
@@ -271,11 +275,15 @@ const s = {
     textAlign: "left",
   },
   badge: {
-    padding: "4px 8px",
+    padding: "0 10px",
+    height: "24px",
+    boxSizing: "border-box",
     borderRadius: "4px",
     fontSize: "12px",
     fontWeight: "bold",
-    display: "inline-block",
+    display: "inline-flex",
+    alignItems: "center",
+    whiteSpace: "nowrap",
   },
   actBtn: {
     padding: "6px 12px",
@@ -309,7 +317,7 @@ const s = {
 };
 
 // 進捗バッジと日時の表示コンポーネント
-const ProgressStatus = ({ candidate, s, thm }) => {
+const ProgressStatus = ({ candidate, s }) => {
   const c = candidate;
   const isCoop = c.is_coop; // ★協力業者フラグ
   const today = new Date();
@@ -349,6 +357,8 @@ const ProgressStatus = ({ candidate, s, thm }) => {
 
   // ★修正：不採用（9）かつ個人（!isCoop）のときは、文字を「不採用」に固定する
   label = String(st) === "9" && !isCoop ? "不採用" : labels[st] || "受付";
+  // 選考履歴がある場合は最新工程の表示名（書類選考中・3次面接予定・辞退など）を優先する
+  if (!isCoop && c.selection_label) label = c.selection_label;
 
   // --- スタイル適用 ---
 
@@ -419,43 +429,84 @@ const ProgressStatus = ({ candidate, s, thm }) => {
   }
 
   return (
-    <div style={{ textAlign: "left" }}>
-      <div style={{ marginBottom: "4px" }}>
-        <span style={badgeStyle}>{label}</span>
-      </div>
+    <div className="nks-list-cell-main">
+      <span style={badgeStyle}>{label}</span>
       {subText && (
-        <div
-          style={{
-            fontSize: "11px",
-            fontWeight: "bold",
-            color: isAlert ? "#dc2626" : thm.mut,
-          }}
-        >
-          {subText}
-        </div>
+        <span className={`nks-status-sub${isAlert ? " is-alert" : ""}`}>{subText}</span>
       )}
     </div>
   );
 };
 
+const EMPLOYMENT_TYPES = ["正社員", "パート・アルバイト", "派遣", "委託"];
+const SOURCE_TYPES = ["求人", "紹介", "人材紹介", "新卒", "その他"];
+const sourceDetailLabel = (type) => ({
+  求人: "媒体名（Indeed、engageなど）",
+  紹介: "紹介者名",
+  人材紹介: "エージェント会社名",
+  新卒: "学校名",
+  その他: "応募経路の詳細",
+}[type] || "応募経路の詳細");
+const todayTokyo = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo" }).format(new Date());
+const validFourDigitDate = (value) => !value || /^(?!0000)\d{4}-\d{2}-\d{2}$/.test(value);
+
 const OfferDateField = ({ value, onChange }) => (
   <label style={{ ...s.lbl, marginBottom: "12px" }}>内定日
-    <input name="offer_date" type="text" placeholder="YYYY/MM/DD" maxLength={10}
-      value={(value || "").slice(0, 10).replaceAll("-", "/")}
-      onChange={event => onChange(event.target.value.replaceAll("/", "-"))}
-      style={{ ...s.inp, width: "160px", marginTop: "6px" }} />
+    <input name="offer_date" type="date" min="1000-01-01" max="9999-12-31"
+      value={(value || "").slice(0, 10)}
+      onChange={event => { if (validFourDigitDate(event.target.value)) onChange(event.target.value); }}
+      style={{ ...s.inp, width: "180px", marginTop: "6px", display: "block" }} />
   </label>
 );
 const EmploymentFields = ({ value, onChange }) => (
   <div style={{ ...s.flexRow, flexWrap: "wrap", gap: "12px" }}>
-    {[["job_title", "職種"], ["planned_department", "配属予定部署"], ["employment_type", "雇用形態"]].map(([name, label]) => (
-      <label key={name} style={{ ...s.lbl, flex: "1 1 150px", marginBottom: 0 }}>
+    {[ ["job_title", "職種"], ["planned_department", "配属予定部署"] ].map(([name, label]) => (
+      <label key={name} style={{ ...s.lbl, flex: "1 1 180px", marginBottom: 0 }}>
         {label}
         <input name={name} value={value[name] || ""} onChange={onChange}
           style={{ ...s.inp, marginTop: "6px" }} />
       </label>
     ))}
+    <label style={{ ...s.lbl, flex: "1 1 180px", marginBottom: 0 }}>
+      雇用形態
+      <select name="employment_type" value={value.employment_type || ""} onChange={onChange}
+        style={{ ...s.inp, marginTop: "6px" }}>
+        <option value="">未設定</option>
+        {value.employment_type && !EMPLOYMENT_TYPES.includes(value.employment_type) && (
+          <option value={value.employment_type}>{value.employment_type}（既存値）</option>
+        )}
+        {EMPLOYMENT_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
+      </select>
+    </label>
   </div>
+);
+const SourceTypeFields = ({ value, onChange }) => (
+  <section className="nks-source-fields">
+    <label style={s.lbl}>応募経路の種別</label>
+    <div className="nks-choice-group">
+      {SOURCE_TYPES.map(type => (
+        <label key={type} className="nks-choice">
+          <input type="radio" name="source_type" value={type}
+            checked={value.source_type === type} onChange={onChange} />
+          {type}
+        </label>
+      ))}
+    </div>
+    {value.source_type && (
+      <label style={{ ...s.lbl, marginTop: "12px" }}>
+        {sourceDetailLabel(value.source_type)}
+        <input type="text" name="agent_name" value={value.agent_name || ""}
+          onChange={onChange} style={{ ...s.inp, marginTop: "6px" }} />
+      </label>
+    )}
+    {value.source_type === "人材紹介" && (
+      <label style={{ ...s.lbl, marginTop: "12px" }}>
+        紹介料（入社時の経費処理用・任意）
+        <input type="number" min="0" name="introducer_fee" value={value.introducer_fee || ""}
+          onChange={onChange} style={{ ...s.inp, marginTop: "6px" }} />
+      </label>
+    )}
+  </section>
 );
 // --- 詳細・選考入力画面 ---
 const CandidateDetail = () => {
@@ -468,6 +519,7 @@ const CandidateDetail = () => {
     new URLSearchParams(location.search).get("view") || "detail",
   );
   const [showRetireInput, setShowRetireInput] = useState(false);
+  const [editingSource, setEditingSource] = useState(false);
 
   // フォームデータ
   const [f, setF] = useState({});
@@ -478,12 +530,12 @@ const CandidateDetail = () => {
   const [fam, setFam] = useState([]);
   const currYear = new Date().getFullYear();
 
-  // ★ タイムラインでの辞退処理用ステート
-  const [timelineDecline, setTimelineDecline] = useState({
-    active: false,
-    stage: "",
-    reason: "",
-  });
+  // 選考履歴（個人応募）。selUnavailable は選考履歴テーブル未作成時（従来の進捗更新で代替）
+  const [selView, setSelView] = useState(null);
+  const [selOpen, setSelOpen] = useState(false);
+  const [selUnavailable, setSelUnavailable] = useState(false);
+  const [legacyProgress, setLegacyProgress] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     apiFetch(`/api/candidates/${id}`)
@@ -493,7 +545,7 @@ const CandidateDetail = () => {
         const fmtDt = (str) => (str ? str.split("T")[0] : "");
         setF({
           ...d, // 全てのカラム（is_coop含む）をロード
-          source_type: d.source_type || "求人", // ★追加：デフォルトは「求人」
+          source_type: d.source_type || "", // 未設定を勝手に求人へ変更しない
           introducer_fee: d.introducer_fee || "", // ★追加
           status: String(d.status || "1"),
           birth_date: fmtDt(d.birth_date),
@@ -517,6 +569,41 @@ const CandidateDetail = () => {
       })
       .catch(() => alert("取得失敗"));
   }, [id]);
+
+  const candIsCoop = cand?.is_coop === true;
+  const candLoaded = cand != null;
+  useEffect(() => {
+    if (!candLoaded || candIsCoop) return;
+    let active = true;
+    selectionApi.load(id).then(result => {
+      if (!active) return;
+      if (result.status === 503) setSelUnavailable(true);
+      else if (result.ok) { setSelUnavailable(false); setSelView(result.data); }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [id, candLoaded, candIsCoop, reloadKey]);
+
+  // 選考の更新結果を画面へ反映する（入力途中の他の項目は保持）
+  const applySelection = (view) => {
+    setSelView(view);
+    setCand((previous) => ({ ...previous, ...view.candidate }));
+    setF((previous) => ({ ...previous, ...mirrorForForm(view.candidate) }));
+  };
+
+  // 従来の進捗モーダル（DB適用前）で保存した後は、選考列だけを読み直す（未保存の入力は保持）
+  const refreshSelectionFields = async () => {
+    try {
+      const res = await apiFetch(`/api/candidates/${id}`);
+      if (!res.ok) return;
+      const d = await res.json();
+      const picked = Object.fromEntries(SELECTION_OWNED_FIELDS.map((field) => [field, d[field] ?? null]));
+      setCand((previous) => ({ ...previous, ...picked }));
+      setF((previous) => ({ ...previous, ...mirrorForForm(picked) }));
+      setReloadKey((key) => key + 1);
+    } catch {
+      alert("最新の進捗を読み込めませんでした。画面を再読み込みしてください。");
+    }
+  };
 
   const hChg = (e) =>
     setF({
@@ -608,6 +695,9 @@ const CandidateDetail = () => {
         family: fam,
         ...currentOverrides, // ★引数で上書きされたデータ（ステータス9等）を適用
       };
+      // 個人応募の選考列は選考の更新（共通モーダル）だけで変更する。基本情報の保存では送らない
+      const isCoopRecord = cand?.is_coop === true;
+      if (!isCoopRecord) for (const field of SELECTION_OWNED_FIELDS) delete payload[field];
       const res = await apiFetch(`/api/candidates/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -616,204 +706,53 @@ const CandidateDetail = () => {
       if (res.ok) {
         alert("データを保存・更新しました");
         setShowRetireInput(false);
-        // 保存後に元データの状態も更新（二重計上防止）
-        setCand({ ...cand, status: payload.status });
-        setF((prev) => ({
-          ...prev,
-          status: payload.status,
-          decline_reason: payload.decline_reason || prev.decline_reason,
+        setEditingSource(false);
+        // 保存後に元データの状態も更新（二重計上防止）。管理種別の変更も反映し、
+        // 次回の保存で送る項目と、個人応募の選考情報の読み込みを変更後の種別に合わせる
+        setCand((previous) => ({
+          ...previous,
+          ...(isCoopRecord ? { status: payload.status } : {}),
+          is_coop: Boolean(payload.is_coop),
+          source_type: payload.source_type, agent_name: payload.agent_name, introducer_fee: payload.introducer_fee,
         }));
+        if (isCoopRecord) {
+          setF((prev) => ({
+            ...prev,
+            status: payload.status,
+            decline_reason: payload.decline_reason || prev.decline_reason,
+          }));
+        }
+      } else if (res.status === 409) {
+        const data = await res.json().catch(() => null);
+        alert(data?.error || "画面が古いため保存できません。再読み込みしてください。");
       } else alert("保存失敗");
     } catch (e) {
       alert("通信エラー");
     }
   };
 
-  // ★ タイムライン用：辞退入力の表示トリガー
-  const triggerDecline = (stageName) => {
-    setTimelineDecline({ active: true, stage: stageName, reason: "" });
-  };
-
-  // ★ タイムライン用：辞退処理の実行（API経由で保存）
-  const executeDecline = async (stageName, reasonType) => {
-    let finalReason = "";
-    if (reasonType === "無断") {
-      finalReason = `${stageName}無断辞退`;
-      if (!window.confirm(`「${finalReason}」として処理を終了しますか？`))
-        return;
-    } else {
-      if (timelineDecline.reason.trim() === "") {
-        alert("辞退理由を入力してください");
-        return;
-      }
-      finalReason = `${stageName}辞退: ${timelineDecline.reason}`;
-      if (!window.confirm(`辞退処理を確定しますか？`)) return;
-    }
-
-    await handleSave({ status: "9", decline_reason: finalReason });
-    setTimelineDecline({ active: false, stage: "", reason: "" });
-  };
-
-  // ★ タイムラインノード描画コンポーネント
-  const renderTimelineNode = (
-    label,
-    dateKey,
-    stageName,
-    showDecline,
-    isLast = false,
-  ) => (
-    <div
-      style={{
-        display: "flex",
-        gap: "12px",
-        marginBottom: "16px",
-        position: "relative",
-      }}
-    >
+  // 協力業者用タイムラインの1行（日付は詳細画面の保存ボタンで確定）
+  const renderTimelineNode = (label, dateKey, isLast = false) => (
+    <div style={{ display: "flex", gap: "12px", marginBottom: "16px", position: "relative" }}>
       {!isLast && (
-        <div
-          style={{
-            position: "absolute",
-            left: "7px",
-            top: "24px",
-            bottom: "-20px",
-            width: "2px",
-            background: thm.brd,
-          }}
-        />
+        <div style={{ position: "absolute", left: "7px", top: "24px", bottom: "-20px", width: "2px", background: thm.brd }} />
       )}
       <div
         style={{
-          width: "16px",
-          height: "16px",
-          borderRadius: "50%",
-          background: f[dateKey] ? thm.pri : thm.brd,
-          position: "relative",
-          zIndex: 1,
-          marginTop: "4px",
+          width: "16px", height: "16px", borderRadius: "50%",
+          background: f[dateKey] ? thm.pri : thm.brd, position: "relative", zIndex: 1, marginTop: "4px",
         }}
       />
       <div style={{ flex: 1 }}>
-        <div
-          style={{
-            fontSize: "13px",
-            fontWeight: "bold",
-            marginBottom: "4px",
-            color: thm.txt,
-          }}
-        >
-          {label}
-        </div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            flexWrap: "wrap",
-          }}
-        >
-          <input
-            type="date"
-            max="9999-12-31"
-            name={dateKey}
-            value={f[dateKey] || ""}
-            onChange={hChg}
-            style={{
-              ...s.inp,
-              padding: "4px",
-              fontSize: "12px",
-              width: "130px",
-              margin: 0,
-            }}
-          />
-          {/* 終了ステータス以外なら辞退ボタンを表示 */}
-          {showDecline && f.status !== "9" && f.status !== "6" && (
-            <>
-              <button
-                onClick={() => triggerDecline(stageName)}
-                style={{
-                  ...s.actBtn,
-                  padding: "4px 8px",
-                  fontSize: "11px",
-                  color: thm.mut,
-                }}
-              >
-                辞退
-              </button>
-              <button
-                onClick={() => executeDecline(stageName, "無断")}
-                style={{
-                  ...s.actBtn,
-                  padding: "4px 8px",
-                  fontSize: "11px",
-                  color: thm.dng,
-                  borderColor: "#fca5a5",
-                }}
-              >
-                無断
-              </button>
-            </>
-          )}
-        </div>
-        {/* インライン辞退理由入力エリア */}
-        {timelineDecline.active && timelineDecline.stage === stageName && (
-          <div
-            style={{
-              marginTop: "8px",
-              padding: "8px",
-              background: "#fef2f2",
-              border: "1px solid #fecdd3",
-              borderRadius: "4px",
-            }}
-          >
-            <input
-              type="text"
-              placeholder="辞退理由..."
-              value={timelineDecline.reason}
-              onChange={(e) =>
-                setTimelineDecline({
-                  ...timelineDecline,
-                  reason: e.target.value,
-                })
-              }
-              style={{
-                ...s.inp,
-                padding: "4px",
-                fontSize: "12px",
-                marginBottom: "8px",
-                width: "100%",
-                boxSizing: "border-box",
-              }}
-            />
-            <div
-              style={{
-                display: "flex",
-                gap: "4px",
-                justifyContent: "flex-end",
-              }}
-            >
-              <button
-                onClick={() =>
-                  setTimelineDecline({ active: false, stage: "", reason: "" })
-                }
-                style={{ ...s.actBtn, padding: "4px 8px", fontSize: "11px" }}
-              >
-                ｷｬﾝｾﾙ
-              </button>
-              <button
-                onClick={() => executeDecline(stageName, "reason")}
-                style={{
-                  ...s.btn,
-                  background: thm.dng,
-                  padding: "4px 8px",
-                  fontSize: "11px",
-                }}
-              >
-                確定
-              </button>
-            </div>
-          </div>
-        )}
+        <div style={{ fontSize: "13px", fontWeight: "bold", marginBottom: "4px", color: thm.txt }}>{label}</div>
+        <input
+          type="date"
+          max="9999-12-31"
+          name={dateKey}
+          value={f[dateKey] || ""}
+          onChange={hChg}
+          style={{ ...s.inp, padding: "4px", fontSize: "12px", width: "130px", margin: 0 }}
+        />
       </div>
     </div>
   );
@@ -995,7 +934,7 @@ const CandidateDetail = () => {
               )}
             </div>
 
-            {/* ★ここに追加：選考タイムライン（日付編集・即時辞退機能） */}
+            {/* 選考タイムライン：個人応募は選考履歴（共通更新モーダルで更新）、協力業者は従来の日付入力 */}
             <div
               style={{
                 fontSize: "13px",
@@ -1004,45 +943,47 @@ const CandidateDetail = () => {
                 marginTop: "16px",
               }}
             >
-              <strong
-                style={{
-                  display: "block",
-                  marginBottom: "16px",
-                  color: thm.txt,
-                }}
-              >
-                選考タイムライン (日付編集)
-              </strong>
-              <div style={{ position: "relative" }}>
-                {renderTimelineNode(
-                  "受付・応募",
-                  "applied_at",
-                  "応募",
-                  !isCoop,
-                )}
-                {renderTimelineNode(
-                  isCoop ? "商談" : "1次面接",
-                  "interview_1_date",
-                  isCoop ? "商談" : "1次面接",
-                  !isCoop,
-                )}
-                {!isCoop &&
-                  renderTimelineNode(
-                    "2次面接",
-                    "interview_2_date",
-                    "2次面接",
-                    true,
+              {!isCoop ? (
+                <div className="nks-sel-panel-head">
+                  <strong>選考タイムライン</strong>
+                  {selUnavailable ? (
+                    <button type="button" className="nks-row-btn nks-row-btn-primary" onClick={() => setLegacyProgress(true)}>
+                      進捗を更新
+                    </button>
+                  ) : (
+                    <button type="button" className="nks-row-btn nks-row-btn-primary" disabled={!selView} onClick={() => setSelOpen(true)}>
+                      選考を更新
+                    </button>
                   )}
-                {renderTimelineNode(
-                  isCoop ? "稼働予定" : "入社予定",
-                  "expected_join_date",
-                  isCoop ? "稼働前" : "入社前",
-                  !isCoop,
-                  true,
+                </div>
+              ) : (
+                <strong
+                  style={{
+                    display: "block",
+                    marginBottom: "16px",
+                    color: thm.txt,
+                  }}
+                >
+                  選考タイムライン (日付編集)
+                </strong>
+              )}
+              {!isCoop && !selUnavailable && (
+                selView ? <SelectionTimeline view={selView} /> : <div className="nks-sel-panel-note">読込中...</div>
+              )}
+              {!isCoop && selUnavailable && (
+                <div className="nks-sel-panel-note">選考履歴は未設定です（DB適用前のため従来の進捗更新を使用）。</div>
+              )}
+              <div style={{ position: "relative" }}>
+                {isCoop && (
+                  <>
+                    {renderTimelineNode("受付・応募", "applied_at")}
+                    {renderTimelineNode("商談", "interview_1_date")}
+                    {renderTimelineNode("稼働予定", "expected_join_date", true)}
+                  </>
                 )}
 
-                {/* 終了・退職ステータスの表示 */}
-                {f.status === "9" && (
+                {/* 終了・退職ステータスの表示（個人応募は選考履歴に表示するため、従来表示は協力業者とDB適用前のみ） */}
+                {(isCoop || selUnavailable) && f.status === "9" && (
                   <div
                     style={{
                       display: "flex",
@@ -1084,7 +1025,7 @@ const CandidateDetail = () => {
                     </div>
                   </div>
                 )}
-                {f.status === "6" && !f.is_retired && (
+                {(isCoop || selUnavailable) && f.status === "6" && !f.is_retired && (
                   <div
                     style={{
                       display: "flex",
@@ -1182,109 +1123,32 @@ const CandidateDetail = () => {
                 >
                   基本情報
                 </h4>
-                {!isCoop && <><OfferDateField value={f.offer_date} onChange={value => setF(previous => ({ ...previous, offer_date: value }))}/><EmploymentFields value={f} onChange={hChg} /></>}
-                <div
-                  style={{
-                    marginBottom: "16px",
-                    padding: "16px",
-                    background: "#f8fafc",
-                    borderRadius: "6px",
-                    border: `1px solid ${thm.brd}`,
-                  }}
-                >
-                  <label
-                    style={{ ...s.lbl, marginBottom: "8px", display: "block" }}
-                  >
-                    応募経路の種別
-                  </label>
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: "16px",
-                      marginBottom: "12px",
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    {["求人", "紹介", "人材紹介", "新卒", "その他"].map(
-                      (type) => (
-                        <label
-                          key={type}
-                          style={{
-                            fontSize: "14px",
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "4px",
-                          }}
-                        >
-                          <input
-                            type="radio"
-                            name="source_type"
-                            value={type}
-                            checked={f.source_type === type}
-                            onChange={hChg}
-                          />{" "}
-                          {type}
-                        </label>
-                      ),
-                    )}
+                {/* 内定日は選考タイムラインの「内定通知」で登録する（二重入力を廃止） */}
+                {!isCoop && <EmploymentFields value={f} onChange={hChg} />}
+                <section className="nks-source-detail">
+                  <div className="nks-section-heading">
+                    <strong>応募経路</strong>
+                    <button type="button" style={s.actBtn} onClick={() => {
+                      if (editingSource) {
+                        setF(previous => ({ ...previous, source_type: cand?.source_type || "", agent_name: cand?.agent_name || "", introducer_fee: cand?.introducer_fee || "" }));
+                      }
+                      setEditingSource(current => !current);
+                    }}>
+                      {editingSource ? "キャンセル" : "編集"}
+                    </button>
                   </div>
-
-                  <label style={s.lbl}>
-                    {f.source_type === "求人"
-                      ? "媒体名 (Indeed, engageなど)"
-                      : f.source_type === "紹介"
-                        ? "紹介者名 (社員名など)"
-                        : f.source_type === "人材紹介"
-                          ? "エージェント会社名"
-                          : f.source_type === "新卒"
-                            ? "卒業学校名"
-                            : "詳細 (直電など)"}
-                  </label>
-                  <input
-                    type="text"
-                    name="agent_name"
-                    value={f.agent_name}
-                    onChange={hChg}
-                    style={s.inp}
-                  />
-
-                  {/* 人材紹介の時だけ紹介料入力枠を出す */}
-                  {f.source_type === "人材紹介" && (
-                    <div
-                      style={{
-                        marginTop: "16px",
-                        padding: "12px",
-                        background: "#f0fdf4",
-                        borderRadius: "6px",
-                        border: "1px solid #bbf7d0",
-                      }}
-                    >
-                      <label style={{ ...s.lbl, color: "#166534" }}>
-                        紹介料（入社処理時に自動で経費計上されます）
-                      </label>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "8px",
-                        }}
-                      >
-                        <span style={{ fontWeight: "bold", color: "#166534" }}>
-                          ¥
-                        </span>
-                        <input
-                          type="number"
-                          name="introducer_fee"
-                          value={f.introducer_fee}
-                          onChange={hChg}
-                          placeholder="例: 800000"
-                          style={{ ...s.inp, width: "200px", margin: 0 }}
-                        />
-                      </div>
+                  {editingSource ? (
+                    <>
+                      <SourceTypeFields value={f} onChange={hChg} />
+                      <div className="nks-inline-note">変更後は画面下部の保存ボタンで確定してください。</div>
+                    </>
+                  ) : (
+                    <div className="nks-static-value">
+                      <strong>{f.source_type || "未設定"}</strong>
+                      {f.agent_name && <span>{f.agent_name}</span>}
                     </div>
                   )}
-                </div>
+                </section>
                 <div style={s.flexRow}>
                   <div style={{ flex: 1 }}>
                     <label style={s.lbl}>{isCoop ? "担当者名" : "氏名"}</label>
@@ -1416,25 +1280,10 @@ const CandidateDetail = () => {
                   </div>
                 </div>
 
-                {/* 緊急連絡先 */}
-                <div
-                  style={{
-                    background: "#fff1f2",
-                    padding: "20px",
-                    borderRadius: "6px",
-                    border: "1px solid #fecdd3",
-                    marginBottom: "24px",
-                  }}
-                >
-                  <h5
-                    style={{
-                      margin: "0 0 16px 0",
-                      color: thm.dng,
-                      fontSize: "15px",
-                    }}
-                  >
-                    緊急連絡先
-                  </h5>
+                {/* 緊急連絡先：必要なときだけ開く */}
+                <details className="nks-emergency">
+                  <summary>緊急連絡先 <span>クリックして入力・確認</span></summary>
+                  <div className="nks-emergency-body">
                   <div style={s.flexRow}>
                     <div style={{ flex: 1 }}>
                       <label style={s.lbl}>氏名</label>
@@ -1536,7 +1385,8 @@ const CandidateDetail = () => {
                       style={s.inp}
                     />
                   </div>
-                </div>
+                  </div>
+                </details>
 
                 <h4
                   style={{
@@ -2315,11 +2165,26 @@ const CandidateDetail = () => {
           </div>
         </div>
       </div>
+      {selOpen && (
+        <SelectionModal
+          candidate={cand}
+          onClose={() => setSelOpen(false)}
+          onChanged={applySelection}
+          onUnavailable={() => { setSelOpen(false); setSelUnavailable(true); }}
+        />
+      )}
+      {legacyProgress && (
+        <ProgressModal
+          cand={cand}
+          onClose={() => setLegacyProgress(false)}
+          onUpdate={refreshSelectionFields}
+        />
+      )}
     </div>
   );
 };
 
-// --- 進捗モーダル ---
+// --- 進捗モーダル（協力業者、および選考履歴テーブル未作成時の個人応募） ---
 const ProgressModal = ({ cand, onClose, onUpdate }) => {
   const [f, setF] = useState({
     status: "1",
@@ -2395,6 +2260,10 @@ const ProgressModal = ({ cand, onClose, onUpdate }) => {
       if (res.ok) {
         onUpdate();
         onClose();
+      } else if (res.status === 409) {
+        // 選考履歴の利用開始後は、個人応募の進捗は選考の更新から変更する
+        const data = await res.json().catch(() => null);
+        alert(data?.error || "画面が古いため保存できません。再読み込みしてください。");
       } else {
         alert(
           `保存エラー (エラーコード: ${res.status})\n\nAPIサーバーがパニックを起こしています。\nVSCodeの「api-serverのターミナル」に詳細なエラー原因（英語）が出ているので確認してください。`,
@@ -2849,6 +2718,10 @@ const CandidateList = () => {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState({ key: "applied_at", dir: "desc" });
   const [progMod, setProgMod] = useState(null);
+  // 個人応募の「更新」は共通の選考更新モーダル（協力業者・DB適用前は従来の進捗モーダル）
+  const [selMod, setSelMod] = useState(null);
+  const openUpdate = (c) => (c.is_coop ? setProgMod(c) : setSelMod(c));
+  const tdMid = { ...s.td, verticalAlign: "middle" };
 
   // 表示モード管理: 'all' (すべて), 'indiv' (個人), 'coop' (協力業者), 'archive' (退職・削除済)
   const [viewMode, setViewMode] = useState("all"); // ★デフォルトをすべてに変更
@@ -3121,125 +2994,101 @@ const CandidateList = () => {
                           opacity: viewMode === "archive" ? 0.7 : 1,
                         }}
                       >
-                        <td style={s.td}>
+                        <td style={tdMid}>
                           <button
+                            type="button"
                             onClick={() =>
                               nav(`/candidates/${c.id}?view=detail`)
                             }
-                            style={s.actBtn}
+                            className="nks-row-btn"
                           >
                             詳細
                           </button>
                         </td>
-                        <td style={s.td}>
+                        <td style={tdMid}>
                           {new Date(c.applied_at).toLocaleDateString("ja-JP")}
                         </td>
-                        <td style={s.td}>
-                          <div
-                            style={{
-                              fontWeight: "bold",
-                              fontSize: "15px",
-                              textAlign: "left",
-                            }}
-                          >
-                            {c.name_kanji}
+                        <td style={tdMid}>
+                          <div className="nks-list-cell">
+                            <div className="nks-list-cell-main">
+                              <span style={{ fontWeight: "bold", fontSize: "15px" }}>
+                                {c.name_kanji}
+                              </span>
+                              <span style={{ fontSize: "11px", color: thm.mut }}>
+                                {c.name_kana}
+                              </span>
+                            </div>
+                            {!c.is_coop && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  nav(`/candidates/${c.id}?view=interview`)
+                                }
+                                className="nks-row-btn nks-row-btn-primary"
+                              >
+                                面接
+                              </button>
+                            )}
                           </div>
-                          <div
-                            style={{
-                              fontSize: "11px",
-                              color: thm.mut,
-                              marginTop: "2px",
-                              marginBottom: "8px",
-                              textAlign: "left",
-                            }}
-                          >
-                            {c.name_kana}
-                          </div>
-                          {!c.is_coop && (
-                            <button
-                              onClick={() =>
-                                nav(`/candidates/${c.id}?view=interview`)
-                              }
-                              style={{
-                                ...s.actBtn,
-                                borderColor: thm.pri,
-                                color: thm.pri,
-                              }}
-                            >
-                              面接
-                            </button>
-                          )}
                         </td>
-                        <td style={s.td}>
+                        <td style={tdMid}>
                           {c.is_coop
                             ? "-"
                             : calcCurrentAge(c.birth_date) || c.age || "-"}
                         </td>
-                        <td style={s.td}>{renderContact(c)}</td>
-                        <td style={s.td}>
-                          <div
-                            style={{ marginBottom: "8px", textAlign: "left" }}
-                          >
+                        <td style={tdMid}>{renderContact(c)}</td>
+                        <td style={tdMid}>
+                          <div className="nks-list-cell">
                             {c.is_retired ? (
-                              <span
-                                style={{
-                                  ...s.badge,
-                                  background: "#fef2f2",
-                                  color: thm.dng,
-                                }}
-                              >{`${retDate?.getMonth() + 1}月${retDate?.getDate()}日退職済`}</span>
+                              <div className="nks-list-cell-main">
+                                <span
+                                  style={{
+                                    ...s.badge,
+                                    background: "#fef2f2",
+                                    color: thm.dng,
+                                  }}
+                                >{`${retDate?.getMonth() + 1}月${retDate?.getDate()}日退職済`}</span>
+                              </div>
                             ) : (
                               <ProgressStatus candidate={c} s={s} thm={thm} />
                             )}
-                          </div>
-                          {viewMode !== "archive" && c.status != 6 && (
-                            <button
-                              onClick={() => setProgMod(c)}
-                              style={s.actBtn}
-                            >
-                              更新
-                            </button>
-                          )}
-                        </td>
-                        <td style={s.td}>
-                          {viewMode === "archive" ? (
-                            <div
-                              style={{
-                                display: "flex",
-                                flexDirection: "column",
-                                gap: "8px",
-                              }}
-                            >
+                            {/* 更新できない行も同じ幅を確保し、バッジ・ボタンの位置を揃える */}
+                            {viewMode !== "archive" && String(c.status) !== "6" ? (
                               <button
+                                type="button"
+                                onClick={() => openUpdate(c)}
+                                className="nks-row-btn"
+                              >
+                                更新
+                              </button>
+                            ) : (
+                              <span className="nks-row-btn nks-row-btn-placeholder" aria-hidden="true">更新</span>
+                            )}
+                          </div>
+                        </td>
+                        <td style={tdMid}>
+                          {viewMode === "archive" ? (
+                            <div className="nks-list-buttons">
+                              <button
+                                type="button"
                                 onClick={() => hRestore(c.id)}
-                                style={{
-                                  ...s.actBtn,
-                                  color: thm.pri,
-                                  borderColor: thm.pri,
-                                }}
+                                className="nks-row-btn nks-row-btn-primary"
                               >
                                 復元
                               </button>
                               <button
+                                type="button"
                                 onClick={() => hHardDel(c.id)}
-                                style={{
-                                  ...s.actBtn,
-                                  color: "#fff",
-                                  background: thm.dng,
-                                  borderColor: thm.dng,
-                                }}
+                                className="nks-row-btn nks-row-btn-solid-danger"
                               >
                                 完全消去
                               </button>
                             </div>
                           ) : (
                             <button
+                              type="button"
                               onClick={() => hDel(c.id)}
-                              style={{
-                                ...s.actBtn,
-                                color: thm.dng,
-                                borderColor: "#fca5a5",
-                              }}
+                              className="nks-row-btn nks-row-btn-danger"
                             >
                               削除
                             </button>
@@ -3273,6 +3122,14 @@ const CandidateList = () => {
         onClose={() => setProgMod(null)}
         onUpdate={fetchC}
       />
+      {selMod && (
+        <SelectionModal
+          candidate={selMod}
+          onClose={() => setSelMod(null)}
+          onChanged={fetchC}
+          onUnavailable={() => { setProgMod(selMod); setSelMod(null); }}
+        />
+      )}
     </div>
   );
 };
@@ -3291,13 +3148,16 @@ const RegistrationForm = () => {
     tel: [""],
     email: [""],
     primary_contact: "tel_0",
-    applied_at: new Date().toISOString().split("T")[0],
+    applied_at: todayTokyo(),
     introducer: "", // ★紹介元
     internal_contact: "", // ★社内担当
     desired_dept: "", // ★希望部署
     job_title: "",
     planned_department: "",
     employment_type: "",
+    source_type: "",
+    agent_name: "",
+    introducer_fee: "",
   });
 
   const hChg = (e) => setF({ ...f, [e.target.name]: e.target.value });
@@ -3322,8 +3182,8 @@ const RegistrationForm = () => {
   };
 
   const handleSave = async () => {
-    if (!f.applied_at) {
-      alert("受付日を入力してください");
+    if (!f.applied_at || !validFourDigitDate(f.applied_at)) {
+      alert("受付日を西暦4桁で入力してください");
       return;
     }
 
@@ -3364,13 +3224,16 @@ const RegistrationForm = () => {
           tel: [""],
           email: [""],
           primary_contact: "tel_0",
-          applied_at: new Date().toISOString().split("T")[0],
+          applied_at: todayTokyo(),
           introducer: "",
           internal_contact: "",
           desired_dept: "",
           job_title: "",
           planned_department: "",
           employment_type: "",
+          source_type: "",
+          agent_name: "",
+          introducer_fee: "",
         });
       }
     } catch (e) {
@@ -3434,7 +3297,6 @@ const RegistrationForm = () => {
           {!f.is_coop ? (
             /* 個人の場合 */
             <>
-              <EmploymentFields value={f} onChange={hChg} />
               <div style={s.flexRow}>
                 <div style={{ flex: 1 }}>
                   <label style={s.lbl}>氏名</label>
@@ -3482,6 +3344,10 @@ const RegistrationForm = () => {
                 </div>
               </div>
 
+              <div className="nks-secondary-fields">
+                <div className="nks-secondary-title">採用条件 <span>任意</span></div>
+                <EmploymentFields value={f} onChange={hChg} />
+              </div>
               <div style={{ marginBottom: "16px" }}>
                 <label style={s.lbl}>職種経験</label>
                 <div style={{ display: "flex", gap: "16px" }}>
@@ -3500,6 +3366,7 @@ const RegistrationForm = () => {
                   ))}
                 </div>
               </div>
+              <SourceTypeFields value={f} onChange={hChg} />
             </>
           ) : (
             /* 協力業者の場合 */
@@ -5144,8 +5011,10 @@ const Sidebar = () => {
         style={{
           display: "flex",
           padding: "12px",
-          color: a ? "#fff" : thm.mut,
-          background: a ? thm.side : "transparent",
+          color: a ? "#fff" : "#c8d4e5",
+          background: a ? "rgba(255,255,255,0.12)" : "transparent",
+          borderLeft: a ? "3px solid #e60012" : "3px solid transparent",
+          borderRadius: "6px",
           textDecoration: "none",
           whiteSpace: "nowrap",
         }}
@@ -5162,7 +5031,7 @@ const Sidebar = () => {
       onMouseLeave={() => setOpen(false)}
       style={{
         width: open ? "200px" : "60px",
-        background: "#0f172a",
+        background: thm.side,
         padding: "20px 10px",
         overflowY: "auto",
         transition: "width 0.2s",

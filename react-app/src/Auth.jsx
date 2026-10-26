@@ -51,16 +51,17 @@ export default function Auth({ children }) {
   if (user) return <>
     <div style={{ position: "fixed", right: 16, bottom: 16, zIndex: 100 }}>
       {error && <span role="alert">{error} </span>}
-      <button type="button" disabled={busy} onClick={logout}>ログアウト</button>
+      <button type="button" className="nks-logout" disabled={busy} onClick={logout}>ログアウト</button>
     </div>
     {children}
   </>;
-  return <main style={{ display: "grid", placeItems: "center", minHeight: "100vh", background: "#f8fafc" }}>
-    <form onSubmit={login} style={{ width: 300, maxWidth: "calc(100vw - 32px)", display: "grid", gap: 12 }}>
+  return <main className="nks-auth">
+    <form onSubmit={login} className="nks-auth-card">
+      <div className="nks-auth-brand"><span>NKS</span> 採用管理システム</div>
       <label>ユーザー名<input required autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} style={{ display: "block", width: "100%", boxSizing: "border-box", padding: 10 }}/></label>
       <label>パスワード<input required type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} style={{ display: "block", width: "100%", boxSizing: "border-box", padding: 10 }}/></label>
       {error && <div role="alert">{error}</div>}
-      <button type="submit" disabled={busy}>ログイン</button>
+      <button type="submit" className="nks-auth-submit" disabled={busy}>ログイン</button>
     </form>
   </main>;
 }

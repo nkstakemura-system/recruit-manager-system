@@ -3,14 +3,14 @@ import React, { useState, useEffect, useMemo } from "react";
 
 // 共通テーマ
 const thm = {
-  bg: "#f8fafc",
+  bg: "#f4f6fa",
   crd: "#ffffff",
-  txt: "#1e293b",
+  txt: "#202c3d",
   mut: "#64748b",
-  brd: "#e2e8f0",
-  pri: "#3b82f6",
-  dng: "#ef4444",
-  side: "#1e293b",
+  brd: "#dbe2ec",
+  pri: "#001a3d",
+  dng: "#e60012",
+  side: "#001a3d",
 };
 
 const RecruitmentStats = () => {
@@ -216,7 +216,7 @@ const RecruitmentStats = () => {
     cursor: "pointer",
     transition: "0.2s",
     border: isActive ? `1px solid ${thm.pri}` : `1px solid ${thm.brd}`,
-    background: isActive ? "#eff6ff" : "#fff",
+    background: isActive ? "#eaf0f8" : "#fff",
     color: isActive ? thm.pri : thm.mut,
   });
 

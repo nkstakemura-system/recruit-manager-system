@@ -2,6 +2,9 @@ const express = require("express");
 const { createAuth } = require("./auth");
 const db = require("./db");
 const { normalizeOfferDate, initialOfferDate, todayTokyo, offerDateUpdateSql } = require("./offerDate");
+const selectionFlow = require("./selectionFlow");
+const selection = require("./selectionService");
+const { createPgSelectionStore } = require("./selectionPgStore");
 require("dotenv").config();
 
 const app = express();
@@ -11,6 +14,20 @@ const auth = createAuth();
 auth.install(app);
 const PORT = process.env.PORT || 5000;
 const optionalText = value => typeof value === "string" && value.trim() ? value.trim() : null;
+const selectionStore = createPgSelectionStore(db);
+const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+// 個人応募の選考列は、選考履歴テーブルが存在する間（$69）は選考履歴APIだけが更新する。
+// 送られなかった選考列は保持する（$70〜$77 は各列が送られたかどうか）。
+const PUT_SELECTION_FLAGS = [
+  ["status", "$7", "$70"], ["decline_reason", "$8", "$71"], ["interview_1_date", "$9", "$72"],
+  ["interview_2_date", "$10", "$73"], ["expected_join_date", "$43", "$74"], ["contact_history", "$47", "$75"],
+  ["interview_2_attendee", "$48", "$76"], ["applied_at", "$49", "$77"],
+];
+const legacySelectionWrite = "(is_coop IS TRUE OR NOT $69::boolean)";
+const putSelectionSet = column => {
+  const [, value, flag] = PUT_SELECTION_FLAGS.find(([name]) => name === column);
+  return `${column}=CASE WHEN ${flag}::boolean AND ${legacySelectionWrite} THEN ${value} ELSE ${column} END`;
+};
 
 // Meeting tokens are accepted only by this read-only endpoint.
 app.get("/api/meeting/hr-summary", auth.requireMeeting, async (req, res) => {
@@ -45,10 +62,37 @@ app.use("/api", auth.requireSession);
 // --- 応募者関連 API ---
 app.get("/api/candidates", async (req, res) => {
   try {
-    const result = await db.query(
-      "SELECT *, to_char(offer_date, 'YYYY-MM-DD') AS offer_date FROM candidates ORDER BY created_at DESC",
-    );
-    res.json(result.rows);
+    // 選考履歴テーブル未作成でも一覧は従来どおり表示する。
+    // 一覧バッジには、取消されていない最新の工程（実際の面接回数）を使う。
+    const result = (await selectionStore.ready())
+      ? await db.query(
+        `SELECT c.*, to_char(c.offer_date, 'YYYY-MM-DD') AS offer_date,
+          le.kind AS latest_selection_kind, le.stage_number AS latest_selection_stage,
+          le.unconfirmed_legacy AS latest_selection_unconfirmed_legacy
+        FROM candidates c
+        LEFT JOIN LATERAL (
+          SELECT e.kind, e.stage_number,
+            -- selectionFlow.isUnconfirmedLegacyInterview と同じ条件（従来データの受付のまま1次面接日のみ）
+            (e.source = 'legacy' AND e.kind = 'interview_scheduled' AND e.stage_number = 1
+              AND e.payload->>'legacy_status' = '1') IS TRUE AS unconfirmed_legacy
+          FROM public.candidate_selection_events e
+          WHERE e.candidate_id = c.id
+            AND e.kind NOT IN ('baseline', 'correction', 'void', 'applied_date_changed', 'contact_history_changed')
+            AND NOT EXISTS (
+              SELECT 1 FROM public.candidate_selection_events v
+              WHERE v.candidate_id = c.id AND v.kind = 'void' AND v.target_event_id = e.id
+            )
+          ORDER BY e.seq DESC LIMIT 1
+        ) le ON true
+        ORDER BY c.created_at DESC`,
+      )
+      : await db.query(
+        "SELECT *, to_char(offer_date, 'YYYY-MM-DD') AS offer_date FROM candidates ORDER BY created_at DESC",
+      );
+    // 従来データの「受付のまま1次面接日のみ」は、一覧も既存の status（受付）で表示する
+    res.json(result.rows.map(row => row.latest_selection_kind && row.latest_selection_unconfirmed_legacy !== true
+      ? { ...row, selection_label: selectionFlow.badgeLabel(row.latest_selection_kind, row.latest_selection_stage) }
+      : row));
   } catch (err) {
     console.error("Database operation failed");
     res.status(500).send("Server Error");
@@ -143,26 +187,50 @@ app.put("/api/candidates/:id", async (req, res) => {
   let offerDate;
   try { offerDate = normalizeOfferDate(b.offer_date); }
   catch { return res.status(400).json({ error: "Invalid offer date" }); }
+  let client;
   try {
-    await db.query(
-      `UPDATE candidates SET 
+    // 応募者行のロック → 選考履歴の有無の確認 → 判定 → 更新 を1トランザクションで行う。
+    // 選考履歴APIも同じ行を FOR UPDATE でロックするため、判定から更新までの間に履歴が追加されることはない。
+    client = await db.connect();
+    await client.query("BEGIN");
+    const current = (await client.query("SELECT is_coop FROM candidates WHERE id = $1 FOR UPDATE", [req.params.id])).rows[0];
+    const selectionManaged = await selectionStore.ready(client);
+    const currentIsCoop = current?.is_coop === true;
+    // 管理種別が送られなかった場合は現在の値を保持する（省略で個人応募へ戻らないようにする）
+    const isCoop = hasOwn(b, "is_coop") ? Boolean(b.is_coop) : current ? current.is_coop : false;
+    const coopChanged = Boolean(current) && Boolean(isCoop) !== currentIsCoop;
+    const hasHistory = selectionManaged && coopChanged && (await client.query(
+      "SELECT EXISTS (SELECT 1 FROM public.candidate_selection_events WHERE candidate_id = $1) AS found", [req.params.id],
+    )).rows[0]?.found === true;
+    // 選考履歴がある応募者の管理種別変更、古い画面からの選考列は、黙って無視せず409で停止する（協力業者は従来どおり保存）。
+    const conflict = current && selectionFlow.candidatePutConflict({
+      managed: selectionManaged, currentIsCoop, nextIsCoop: Boolean(isCoop), hasHistory, body: b,
+    });
+    if (conflict) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: conflict.message, code: conflict.code });
+    }
+    await client.query(
+      `UPDATE candidates SET
         name_kanji=$1, name_kana=$2, age=$3, birth_year=$4, tel=$5, email=$6,
-        status=$7, decline_reason=$8, interview_1_date=$9, interview_2_date=$10, 
+        ${putSelectionSet("status")}, ${putSelectionSet("decline_reason")},
+        ${putSelectionSet("interview_1_date")}, ${putSelectionSet("interview_2_date")},
         motivation_memo=$11, prev_salary=$12, desired_salary=$13, commute_method=$14, 
         experience_memo=$15, available_date=$16, other_selection_status=$17, other_memo=$18,
         qa_1=$19, qa_2=$20, interview_2_memo=$21, agent_name=$22, resume_memo=$23,
         zip_code=$24, address=$25, address_banchi=$26, address_building=$27, address_room=$28,
         emerg_zip_code=$29, emerg_address=$30, emerg_address_banchi=$31, emerg_address_building=$32, emerg_address_room=$33,
         emerg_tel=$34, emerg_name=$35, emerg_relation=$36, education=$37, graduation_year=$38, 
-        work_history=$39, licenses=$40, family=$41, commute_time=$42, expected_join_date=$43,
-        birth_date=$44, is_retired=$45, retirement_date=$46, contact_history=$47, interview_2_attendee=$48,
-        applied_at=$49, is_coop=$50, company_name=$51, introducer=$52, internal_contact=$53, 
+        work_history=$39, licenses=$40, family=$41, commute_time=$42, ${putSelectionSet("expected_join_date")},
+        birth_date=$44, is_retired=$45, retirement_date=$46,
+        ${putSelectionSet("contact_history")}, ${putSelectionSet("interview_2_attendee")},
+        ${putSelectionSet("applied_at")}, is_coop=$50, company_name=$51, introducer=$52, internal_contact=$53,
         desired_dept=$54, subcontract_status=$55,
         source_type=$57, introducer_fee=$58,
         job_title=CASE WHEN $59::boolean THEN $60::text ELSE job_title END,
         planned_department=CASE WHEN $61::boolean THEN $62::text ELSE planned_department END,
         employment_type=CASE WHEN $63::boolean THEN $64::text ELSE employment_type END,
-        ${offerDateUpdateSql}
+        offer_date=CASE WHEN ${legacySelectionWrite} THEN (${offerDateUpdateSql.replace(/^offer_date=/, "")}) ELSE offer_date END
       WHERE id = $56`,
       [
         b.name_kanji,
@@ -214,7 +282,7 @@ app.put("/api/candidates/:id", async (req, res) => {
         JSON.stringify(b.contact_history || []),
         b.interview_2_attendee,
         b.applied_at,
-        b.is_coop || false,
+        isCoop,
         b.company_name,
         b.introducer,
         b.internal_contact,
@@ -227,14 +295,46 @@ app.put("/api/candidates/:id", async (req, res) => {
         Object.prototype.hasOwnProperty.call(b, "planned_department"), optionalText(b.planned_department),
         Object.prototype.hasOwnProperty.call(b, "employment_type"), optionalText(b.employment_type),
         Object.prototype.hasOwnProperty.call(b, "offer_date"), offerDate, todayTokyo(), b.status,
+        selectionManaged, // $69
+        ...PUT_SELECTION_FLAGS.map(([field]) => hasOwn(b, field)), // $70〜$77
       ],
     );
+    await client.query("COMMIT");
     res.json({ message: "更新完了" });
   } catch (err) {
+    if (client) try { await client.query("ROLLBACK"); } catch { /* 接続断時は元のエラーを優先 */ }
     console.error("Database operation failed");
     res.status(500).send("Server Error");
+  } finally {
+    client?.release();
   }
 });
+
+// --- 選考履歴 API（個人応募のみ。協力業者は従来の進捗更新を使用） ---
+const selectionRoute = handler => async (req, res) => {
+  try {
+    res.json(await handler(req));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message, code: err.code, fields: err.fields });
+    console.error("Selection operation failed");
+    res.status(500).json({ error: "選考情報を保存できませんでした" });
+  }
+};
+// 監査用の操作者（ログインユーザー名と利用端末）
+const selectionActor = req => `${req.authUser?.username || "unknown"}@${req.get("Authorization") ? "mobile" : "web"}`;
+app.get("/api/candidates/:id/selection", selectionRoute(req =>
+  selection.getTimeline(selectionStore, req.params.id)));
+app.post("/api/candidates/:id/selection/events", selectionRoute(req =>
+  selection.addStep(selectionStore, req.params.id, req.body, selectionActor(req))));
+// 訂正・取消は元の工程を変更せず、記録を追記する
+app.post("/api/candidates/:id/selection/events/:eventId/correction", selectionRoute(req =>
+  selection.correctStep(selectionStore, req.params.id, req.params.eventId, req.body, selectionActor(req))));
+app.post("/api/candidates/:id/selection/events/:eventId/void", selectionRoute(req =>
+  selection.voidStep(selectionStore, req.params.id, req.params.eventId, req.body, selectionActor(req))));
+app.patch("/api/candidates/:id/selection/applied-date", selectionRoute(req =>
+  selection.setAppliedDate(selectionStore, req.params.id, req.body, selectionActor(req))));
+app.patch("/api/candidates/:id/selection/contact-history", selectionRoute(req =>
+  selection.setContactHistory(selectionStore, req.params.id, req.body, selectionActor(req))));
 
 // 論理削除（非表示）
 app.delete("/api/candidates/:id", async (req, res) => {
