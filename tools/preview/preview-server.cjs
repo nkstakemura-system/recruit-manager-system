@@ -15,6 +15,7 @@ const flow = require(path.join(root, "api-server", "selectionFlow.js"));
 const selection = require(path.join(root, "api-server", "selectionService.js"));
 const { createMemorySelectionStore } = require(path.join(root, "api-server", "selectionMemoryStore.js"));
 const { buildFacts } = require(path.join(root, "api-server", "dashboardFacts.js"));
+const contacts = require(path.join(root, "api-server", "contactService.js"));
 
 const dist = path.join(root, "react-app", "dist");
 const indexPath = path.join(dist, "index.html");
@@ -31,10 +32,10 @@ const shiftDays = days => { const d = new Date(flow.todayTokyo() + "T00:00:00Z")
 // 架空データ（実在の人物・応募者ではない）
 const blank = { tel: [], email: [], qa_1: [], qa_2: [], work_history: [], licenses: [], family: [], contact_history: [], is_deleted: false, is_retired: false };
 const candidates = [
-  { ...blank, id: 900001, name_kanji: "表示確認用・山田", name_kana: "ヒョウジカクニンヨウ ヤマダ", status: 1, applied_at: "2026-10-20", experience: "経験者", source_type: "求人", agent_name: "架空求人媒体", job_title: "施工管理", employment_type: "正社員", tel: ["000-0000-0001"], primary_contact: "tel_0", created_at: "2026-10-20T01:00:00Z" },
+  { ...blank, id: 900001, name_kanji: "表示確認用・山田", name_kana: "ヒョウジカクニンヨウ ヤマダ", status: 1, applied_at: "2026-10-20", experience: "経験者", source_type: "求人", agent_name: "架空求人媒体", job_title: "施工管理", employment_type: "正社員", tel: ["000-0000-0001"], primary_contact: "tel_0", birth_date: "1989-01-07", graduation_year: "2007", work_history: [{ company: "架空建設", start_year: "2007", end_year: "2019", is_same_industry: true, is_same_job: false }], licenses: [{ name: "架空資格", date: "2019" }], created_at: "2026-10-20T01:00:00Z" },
   { ...blank, id: 900002, name_kanji: "表示確認用・佐藤", name_kana: "ヒョウジカクニンヨウ サトウ", status: 2, applied_at: "2026-10-14", experience: "未経験者", source_type: "紹介", agent_name: "架空紹介者", contact_history: [{ date: "2026-10-15", tel: true, email: false }], created_at: "2026-10-14T01:00:00Z" },
   { ...blank, id: 900003, name_kanji: "表示確認用・鈴木", name_kana: "ヒョウジカクニンヨウ スズキ", status: 3, applied_at: "2026-10-01", interview_1_date: "2026-10-27", experience: "経験者", source_type: "求人", created_at: "2026-10-01T01:00:00Z" },
-  { ...blank, id: 900004, name_kanji: "表示確認用・高橋", name_kana: "ヒョウジカクニンヨウ タカハシ", status: 4, applied_at: "2026-09-18", interview_1_date: "2026-09-25", interview_2_date: "2026-10-09", interview_2_attendee: "架空部長", experience: "経験者", source_type: "人材紹介", agent_name: "架空エージェント", introducer_fee: 300000, created_at: "2026-09-18T01:00:00Z" },
+  { ...blank, id: 900004, name_kanji: "表示確認用・高橋", name_kana: "ヒョウジカクニンヨウ タカハシ", status: 4, applied_at: "2026-09-18", interview_1_date: "2026-09-25", interview_2_date: "2026-10-09", interview_2_attendee: "架空部長", experience: "経験者", source_type: "人材紹介", agent_name: "架空エージェント", introducer_fee: 300000, tel: ["000-0000-0004"], email: ["preview4a@example.invalid", "preview4b@example.invalid"], primary_contact: "email_1", created_at: "2026-09-18T01:00:00Z" },
   { ...blank, id: 900005, name_kanji: "表示確認用・田中", name_kana: "ヒョウジカクニンヨウ タナカ", status: 5, applied_at: "2026-08-19", interview_1_date: "2026-09-02", offer_date: "2026-10-01", expected_join_date: "2026-11-01", experience: "経験者", source_type: "人材紹介", agent_name: "架空エージェント", introducer_fee: 250000, job_title: "CADオペレーター", planned_department: "設計部", employment_type: "正社員", created_at: "2026-08-19T01:00:00Z" },
   { ...blank, id: 900006, name_kanji: "表示確認用・伊藤", name_kana: "ヒョウジカクニンヨウ イトウ", status: 9, applied_at: "2026-09-05", interview_1_date: "2026-09-12", decline_reason: "1次面接辞退: 架空の理由（他社決定）", experience: "未経験者", source_type: "求人", created_at: "2026-09-05T01:00:00Z" },
   { ...blank, id: 900007, name_kanji: "表示確認用・渡辺", name_kana: "ヒョウジカクニンヨウ ワタナベ", status: 6, applied_at: "2026-07-01", interview_1_date: "2026-07-08", offer_date: "2026-07-20", expected_join_date: "2026-08-01", experience: "経験者", source_type: "新卒", agent_name: "架空学校", created_at: "2026-07-01T01:00:00Z" },
@@ -60,6 +61,7 @@ const expenses = [
   { id: 800003, payee: "架空求人媒体", amount: 80000, expense_date: "2026-03-01" },
 ];
 const store = createMemorySelectionStore(candidates, { ready: historyTable });
+const contactStore = contacts.createMemoryContactStore(candidates);
 
 // 架空の選考履歴（実際の操作と同じく selectionService 経由で追記する）
 async function seedHistory() {
@@ -169,6 +171,18 @@ async function api(req, res, pathname) {
       return send(res, 200, candidate);
     }
   }
+  // 本番と同じ連絡先API（contactService）をメモリ保存先で実行する
+  const contact = /^\/api\/candidates\/([^/]+)\/contacts$/.exec(pathname);
+  if (contact && method === "PATCH") {
+    const body = await readBody(req);
+    try {
+      return send(res, 200, await contacts.updateContacts(contactStore, contact[1], body));
+    } catch (err) {
+      return send(res, err.status || 500, err.status
+        ? { error: err.message, code: err.code, field: err.field, current: err.current }
+        : { error: "Local preview error" });
+    }
+  }
   const one = /^\/api\/candidates\/(\d+)(?:\/(restore|physical))?$/.exec(pathname);
   if (one) {
     const index = candidates.findIndex(c => String(c.id) === one[1]);
@@ -184,8 +198,19 @@ async function api(req, res, pathname) {
         managed: historyTable, currentIsCoop: c.is_coop === true, nextIsCoop: isCoop, hasHistory: store.log(c.id).length > 0, body,
       });
       if (conflict) return send(res, 409, { error: conflict.message, code: conflict.code });
-      // 送られた項目だけを保存（送られなかった選考列は保持）
-      for (const [key, value] of Object.entries(body)) if (key !== "id") c[key] = value;
+      if (typeof body.birth_date === "string" && /^[+-]?\d{5,}/.test(body.birth_date.trim())) {
+        return send(res, 400, { error: "生年月日は西暦4桁で入力してください" });
+      }
+      // 本番と同じく、卒業年・職歴・資格の5桁以上の年は保存しない
+      const longYear = v => (typeof v === "string" ? /^\s*\d{5,}\s*$/.test(v) : Number.isInteger(v) && v > 9999);
+      const years = [body.graduation_year,
+        ...(Array.isArray(body.work_history) ? body.work_history.flatMap(w => [w?.start_year, w?.end_year]) : []),
+        ...(Array.isArray(body.licenses) ? body.licenses.map(l => l?.date) : [])];
+      if (years.some(longYear)) return send(res, 400, { error: "年は西暦4桁で入力してください" });
+      // 送られた項目だけを保存（送られなかった選考列は保持）。
+      // 本番と同じく、連絡先（tel・email・primary_contact）は連絡先APIだけが更新する
+      const contactOwned = ["tel", "email", "primary_contact"];
+      for (const [key, value] of Object.entries(body)) if (key !== "id" && !contactOwned.includes(key)) c[key] = value;
       return send(res, 200, { message: "更新完了" });
     }
     if (method === "PATCH" && one[2] === "restore") {

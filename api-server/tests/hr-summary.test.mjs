@@ -63,7 +63,7 @@ function serverHarness(mode = "development", rows = [], respond = null, customDb
       if (name === "./auth") return { createAuth: () => ({ install() {}, requireSession() {}, requireMeeting() {} }) };
       if (name === "./db") return db;
       if (name === "./offerDate") return offerModule;
-      if (["./selectionFlow", "./selectionService", "./selectionPgStore", "./dashboardFacts"].includes(name)) return requireLocal("." + name);
+      if (["./selectionFlow", "./selectionService", "./selectionPgStore", "./dashboardFacts", "./contactService"].includes(name)) return requireLocal("." + name);
       if (name === "dotenv") return { config() {} };
       if (name === "path") return path;
       throw new Error("Unexpected dependency: " + name);
@@ -451,4 +451,69 @@ test("C-04: concurrent selection updates and type changes cannot slip past the h
     }
   }
   assert.equal(broken, true);
+});
+test("full-field PUT keeps TEL/Email (contact API only) and rejects 5+ digit birth years", async () => {
+  const h = serverHarness();
+  const updates = () => h.queries.filter(q => /^UPDATE candidates SET/.test(q.sql));
+  await h.routes.get("put /api/candidates/:id")({
+    body: { tel: ["000-stale"], email: ["stale@example.invalid"], primary_contact: "email_0", birth_date: "1990-05-10" }, params: { id: "1" },
+  }, h.response());
+  const sql = updates()[0].sql;
+  assert.match(sql, /tel=COALESCE\(\$5, tel\), email=COALESCE\(\$6, email\)/);
+  assert.doesNotMatch(sql, /primary_contact/);
+  assert.deepEqual(Array.from(updates()[0].params.slice(4, 6)), [null, null]);
+  assert.equal(updates()[0].params[43], "1990-05-10");
+  for (const birth_date of ["123456-01-01", "+12345-01-01", "20240-01-01"]) {
+    const g = serverHarness(), res = g.response();
+    await g.routes.get("put /api/candidates/:id")({ body: { birth_date }, params: { id: "1" } }, res);
+    assert.equal(res.code, 400);
+    assert.equal(g.queries.length, 0);
+  }
+  // 卒業年・職歴・資格の5桁以上の年も拒否。既存の自由記載（2015年4月 など）は従来どおり保存できる
+  for (const body of [
+    { graduation_year: "123456" }, { graduation_year: 20190 },
+    { work_history: [{ company: "x", start_year: "2001", end_year: "20190" }] },
+    { licenses: [{ name: "x", date: " 12345 " }] },
+  ]) {
+    const g = serverHarness(), res = g.response();
+    await g.routes.get("put /api/candidates/:id")({ body, params: { id: "1" } }, res);
+    assert.equal(res.code, 400, JSON.stringify(body));
+    assert.equal(g.queries.length, 0);
+  }
+  const ok = serverHarness(), okRes = ok.response();
+  await ok.routes.get("put /api/candidates/:id")({
+    body: { graduation_year: "2007", work_history: [{ start_year: "1989", end_year: "" }], licenses: [{ name: "x", date: "2015年4月" }] }, params: { id: "1" },
+  }, okRes);
+  assert.equal(okRes.code, 200);
+});
+
+test("contact API route updates only tel/email/primary_contact under a row lock and returns 409 for a stale screen", async () => {
+  const current = { tel: [], email: [], primary_contact: "tel_0" };
+  const h = serverHarness("development", [], sql => (/^SELECT tel, email, primary_contact/.test(sql) ? [current] : []));
+  const res = h.response();
+  await h.routes.get("patch /api/candidates/:id/contacts")({
+    params: { id: "5" },
+    body: { tel: ["090-0000-0001"], email: [""], primary_contact: "tel_0", expected: current, status: "9", name_kanji: "x" },
+  }, res);
+  assert.equal(res.code, 200);
+  assert.deepEqual(res.body, { tel: ["090-0000-0001"], email: [], primary_contact: "tel_0" });
+  assert.deepEqual(h.queries.map(q => q.sql.replace(/\s+/g, " ").split(" ").slice(0, 2).join(" ")),
+    ["BEGIN", "SELECT tel,", "UPDATE candidates", "COMMIT"]);
+  const update = h.queries.find(q => q.sql.startsWith("UPDATE"));
+  assert.equal(update.sql, "UPDATE candidates SET tel = $2, email = $3, primary_contact = $4 WHERE id = $1");
+  assert.ok(h.queries.every(q => q.conn === h.queries[0].conn && q.conn > 0), "同じトランザクション接続で実行");
+
+  const stale = h.response();
+  const before = h.queries.length;
+  await h.routes.get("patch /api/candidates/:id/contacts")({
+    params: { id: "5" }, body: { tel: [], expected: { tel: ["old"], email: [], primary_contact: "tel_0" } },
+  }, stale);
+  assert.equal(stale.code, 409);
+  assert.equal(stale.body.code, "contact_conflict");
+  assert.deepEqual(h.queries.slice(before).map(q => q.sql.split(" ")[0]), ["BEGIN", "SELECT", "ROLLBACK"]);
+
+  const invalid = h.response();
+  await h.routes.get("patch /api/candidates/:id/contacts")({ params: { id: "5" }, body: { email: ["bad"], expected: current } }, invalid);
+  assert.equal(invalid.code, 400);
+  assert.equal(invalid.body.field, "email");
 });

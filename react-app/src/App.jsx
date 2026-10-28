@@ -1,6 +1,6 @@
 import Auth from "./Auth";
 import { apiFetch } from "./api";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   BrowserRouter as Router,
   Routes,
@@ -15,6 +15,13 @@ import SelectionModal from "./selection/SelectionModal";
 import SelectionTimeline from "./selection/SelectionTimeline";
 import Dashboard from "./dashboard/PeriodDashboard";
 import { selectionApi, mirrorForForm, SELECTION_OWNED_FIELDS } from "./selection/selectionApi";
+import ContactModal from "./contact/ContactModal";
+import "./contact/contact.css";
+import { forceHalfWidthTel, forceHalfWidthEmail, formatTelOnBlur } from "./contact/contactInput";
+import { contactList, normalizeContacts, resolvePrimary } from "../../shared/contacts.mjs";
+import { isFourDigitDate } from "../../shared/wareki.mjs";
+import { DateWithWareki, WarekiToggle, YearWithWareki } from "./wareki/WarekiFields";
+import { WarekiErrorContext } from "./wareki/warekiErrors";
 
 // --- 入力フィルター ---
 const cleanText = (str) =>
@@ -33,39 +40,20 @@ const forceHalfWidthNumber = (str) =>
           String.fromCharCode(s.charCodeAt(0) - 0xfee0),
         )
         .replace(/[^0-9]/g, "");
-const forceHalfWidthTel = (str) =>
-  !str
-    ? ""
-    : str
-        .replace(/[０-９]/g, (s) =>
-          String.fromCharCode(s.charCodeAt(0) - 0xfee0),
-        )
-        .replace(/[ー－]/g, "-")
-        .replace(/[^0-9-]/g, "");
-const forceHalfWidthEmail = (str) =>
-  !str
-    ? ""
-    : str
-        .replace(/[Ａ-Ｚａ-ｚ０-９．＠＿－]/g, (s) =>
-          String.fromCharCode(s.charCodeAt(0) - 0xfee0),
-        )
-        .replace(/[^a-zA-Z0-9.@_-]/g, "");
 const toHalfWidth = (str) =>
   !str
     ? ""
     : str.replace(/[Ａ-Ｚａ-ｚ０-９]/g, (s) =>
         String.fromCharCode(s.charCodeAt(0) - 0xfee0),
       );
-const formatTelOnBlur = (val) => {
-  if (!val) return "";
-  let v = val.replace(/[^0-9]/g, "");
-  if (v.length === 10)
-    return v.startsWith("03") || v.startsWith("06")
-      ? `${v.slice(0, 2)}-${v.slice(2, 6)}-${v.slice(6, 10)}`
-      : `${v.slice(0, 3)}-${v.slice(3, 6)}-${v.slice(6, 10)}`;
-  if (v.length === 11)
-    return `${v.slice(0, 3)}-${v.slice(3, 7)}-${v.slice(7, 11)}`;
-  return v;
+
+// 職歴・資格の行の key（行の削除後に、別の行の和暦入力の状態を引き継がないよう、行のオブジェクトごとに固定）
+const rowKeys = new WeakMap();
+let nextRowKey = 0;
+const rowKey = (row, index) => {
+  if (!row || typeof row !== "object") return `i${index}`;
+  if (!rowKeys.has(row)) rowKeys.set(row, `r${++nextRowKey}`);
+  return rowKeys.get(row);
 };
 
 // 生年月日から現在の年齢を自動計算
@@ -529,6 +517,19 @@ const CandidateDetail = () => {
   const [lic, setLic] = useState([]);
   const [fam, setFam] = useState([]);
   const currYear = new Date().getFullYear();
+  // 和暦入力の表示（項目ごと。保存する値は西暦のまま）
+  const [wareki, setWareki] = useState({ birth: false, graduation: false, work: false, license: false });
+  const setWarekiFor = (key) => (checked) => setWareki((w) => ({ ...w, [key]: checked }));
+  // 入力途中・不正な和暦や年（欄ごとのエラー）。残っている間は保存しない
+  const [warekiErrors, setWarekiErrors] = useState({});
+  const reportWareki = useCallback((fieldId, error) => setWarekiErrors((current) => {
+    if ((current[fieldId] || "") === error) return current;
+    const next = { ...current };
+    if (error) next[fieldId] = error;
+    else delete next[fieldId];
+    return next;
+  }), []);
+  const [contactOpen, setContactOpen] = useState(false);
 
   // 選考履歴（個人応募）。selUnavailable は選考履歴テーブル未作成時（従来の進捗更新で代替）
   const [selView, setSelView] = useState(null);
@@ -647,6 +648,15 @@ const CandidateDetail = () => {
   const handleSave = async (overrideData = null) => {
     const currentOverrides = overrideData || {};
     const targetStatus = currentOverrides.status || f.status;
+    if (f.birth_date && !isFourDigitDate(f.birth_date)) {
+      alert("生年月日は西暦4桁の正しい日付で入力してください");
+      return;
+    }
+    const inputErrors = Object.values(warekiErrors);
+    if (inputErrors.length) {
+      alert(`入力内容を確認してください。\n${inputErrors.join("\n")}`);
+      return;
+    }
 
     // 紹介料の自動経費計上ロジック
     if (
@@ -698,6 +708,10 @@ const CandidateDetail = () => {
       // 個人応募の選考列は選考の更新（共通モーダル）だけで変更する。基本情報の保存では送らない
       const isCoopRecord = cand?.is_coop === true;
       if (!isCoopRecord) for (const field of SELECTION_OWNED_FIELDS) delete payload[field];
+      // 連絡先は連絡先の編集（専用API）だけで変更する
+      delete payload.tel;
+      delete payload.email;
+      delete payload.primary_contact;
       const res = await apiFetch(`/api/candidates/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -763,6 +777,7 @@ const CandidateDetail = () => {
   const isCoop = f.is_coop;
 
   return (
+    <WarekiErrorContext.Provider value={reportWareki}>
     <div style={s.main}>
       <div style={{ maxWidth: "1200px" }}>
         {/* タブ・ヘッダー */}
@@ -910,28 +925,29 @@ const CandidateDetail = () => {
                 paddingTop: "16px",
               }}
             >
-              <strong style={{ display: "block", marginBottom: "8px" }}>
-                連絡先
-              </strong>
-              {f.tel.map(
-                (t, i) =>
-                  t && (
-                    <div key={i} style={{ marginBottom: "4px" }}>
-                      TEL: {t}
-                    </div>
-                  ),
-              )}
-              {f.email.map(
-                (e, i) =>
-                  e && (
-                    <div
-                      key={i}
-                      style={{ marginBottom: "4px", overflowWrap: "anywhere" }}
-                    >
-                      ✉: {e}
-                    </div>
-                  ),
-              )}
+              <div className="nks-sel-panel-head">
+                <strong>連絡先</strong>
+                <button type="button" className="nks-row-btn" onClick={() => setContactOpen(true)}>
+                  編集
+                </button>
+              </div>
+              {(() => {
+                const primary = resolvePrimary(f);
+                const rows = [
+                  ...contactList(f.tel).map((v, i) => ({ kind: "tel", i, v })),
+                  ...contactList(f.email).map((v, i) => ({ kind: "email", i, v })),
+                ].filter((row) => row.v.trim());
+                if (!rows.length) return <div className="nks-sel-panel-note">未登録</div>;
+                return rows.map((row) => (
+                  <div key={`${row.kind}_${row.i}`} className="nks-contact-side-row">
+                    <span>{row.kind === "tel" ? "TEL:" : "✉:"}</span>
+                    <span>{row.v}</span>
+                    {primary?.kind === row.kind && primary.index === row.i && (
+                      <span className="nks-contact-side-mark">代表</span>
+                    )}
+                  </div>
+                ));
+              })()}
             </div>
 
             {/* 選考タイムライン：個人応募は選考履歴（共通更新モーダルで更新）、協力業者は従来の日付入力 */}
@@ -1187,14 +1203,17 @@ const CandidateDetail = () => {
                     }}
                   >
                     <div style={{ flex: 1 }}>
-                      <label style={s.lbl}>生年月日（履歴書記載）</label>
-                      <input
-                        type="date"
-                        max="9999-12-31"
-                        name="birth_date"
+                      <div className="nks-wareki-label-row">
+                        <label style={{ ...s.lbl, marginBottom: 0 }}>生年月日（履歴書記載）</label>
+                        <WarekiToggle checked={wareki.birth} onChange={setWarekiFor("birth")} />
+                      </div>
+                      <DateWithWareki
                         value={f.birth_date}
-                        onChange={hChg}
-                        style={s.inp}
+                        onChange={(value) => setF((previous) => ({ ...previous, birth_date: value }))}
+                        wareki={wareki.birth}
+                        label="生年月日"
+                        inputProps={{ name: "birth_date" }}
+                        style={{ ...s.inp, width: "170px" }}
                       />
                     </div>
                     <div style={{ flex: 1 }}>
@@ -1412,22 +1431,27 @@ const CandidateDetail = () => {
                         />
                       </div>
                       <div style={{ flex: 1 }}>
-                        <label style={s.lbl}>卒業年 (西暦)</label>
-                        <input
-                          type="text"
-                          name="graduation_year"
+                        <div className="nks-wareki-label-row">
+                          <label style={{ ...s.lbl, marginBottom: 0 }}>卒業年 (西暦)</label>
+                          <WarekiToggle checked={wareki.graduation} onChange={setWarekiFor("graduation")} />
+                        </div>
+                        <YearWithWareki
                           value={f.graduation_year}
-                          onChange={hChg}
-                          onBlur={hBlurHW}
-                          style={s.inp}
+                          onChange={(value) => setF((previous) => ({ ...previous, graduation_year: toHalfWidth(value) }))}
+                          wareki={wareki.graduation}
+                          label="卒業年"
+                          style={{ ...s.inp, width: "120px" }}
                         />
                       </div>
                     </div>
                     <div style={{ marginBottom: "24px" }}>
-                      <label style={s.lbl}>職歴</label>
+                      <div className="nks-wareki-label-row">
+                        <label style={{ ...s.lbl, marginBottom: 0 }}>職歴</label>
+                        <WarekiToggle checked={wareki.work} onChange={setWarekiFor("work")} />
+                      </div>
                       {workHist.map((w, i) => (
                         <div
-                          key={i}
+                          key={rowKey(w, i)}
                           style={{
                             background: "#f8fafc",
                             border: `1px solid ${thm.brd}`,
@@ -1449,32 +1473,24 @@ const CandidateDetail = () => {
                             placeholder="会社名"
                             style={{ ...s.inp, width: "220px" }}
                           />
-                          <input
-                            type="text"
+                          <YearWithWareki
                             value={w.start_year || ""}
-                            onChange={(e) =>
-                              updArr(
-                                setWorkHist,
-                                i,
-                                "start_year",
-                                toHalfWidth(e.target.value),
-                              )
+                            onChange={(value) =>
+                              updArr(setWorkHist, i, "start_year", toHalfWidth(value))
                             }
+                            wareki={wareki.work}
+                            label={`職歴${i + 1}の入社年`}
                             placeholder="入社年"
                             style={{ ...s.inp, width: "80px" }}
                           />
                           <span>〜</span>
-                          <input
-                            type="text"
+                          <YearWithWareki
                             value={w.end_year || ""}
-                            onChange={(e) =>
-                              updArr(
-                                setWorkHist,
-                                i,
-                                "end_year",
-                                toHalfWidth(e.target.value),
-                              )
+                            onChange={(value) =>
+                              updArr(setWorkHist, i, "end_year", toHalfWidth(value))
                             }
+                            wareki={wareki.work}
+                            label={`職歴${i + 1}の退社年`}
                             placeholder="退社年"
                             style={{ ...s.inp, width: "80px" }}
                           />
@@ -1563,10 +1579,13 @@ const CandidateDetail = () => {
 
                 {/* 資格 (共通) */}
                 <div style={{ marginBottom: "24px" }}>
-                  <label style={s.lbl}>資格</label>
+                  <div className="nks-wareki-label-row">
+                    <label style={{ ...s.lbl, marginBottom: 0 }}>資格</label>
+                    <WarekiToggle checked={wareki.license} onChange={setWarekiFor("license")} />
+                  </div>
                   {lic.map((l, i) => (
                     <div
-                      key={i}
+                      key={rowKey(l, i)}
                       style={{
                         display: "flex",
                         gap: "12px",
@@ -1582,12 +1601,13 @@ const CandidateDetail = () => {
                         placeholder="資格名"
                         style={{ ...s.inp, flex: 1 }}
                       />
-                      <input
-                        type="text"
+                      <YearWithWareki
                         value={l.date || ""}
-                        onChange={(e) =>
-                          updArr(setLic, i, "date", toHalfWidth(e.target.value))
+                        onChange={(value) =>
+                          updArr(setLic, i, "date", toHalfWidth(value))
                         }
+                        wareki={wareki.license}
+                        label={`資格${i + 1}の取得年`}
                         placeholder="取得年"
                         style={{ ...s.inp, width: "140px" }}
                       />
@@ -2165,6 +2185,18 @@ const CandidateDetail = () => {
           </div>
         </div>
       </div>
+      {contactOpen && (
+        <ContactModal
+          candidateId={id}
+          name={f.name_kanji}
+          onClose={() => setContactOpen(false)}
+          onSaved={(saved) => {
+            // 連絡先の3項目だけを反映する（入力途中の他の項目は保持）
+            setCand((previous) => ({ ...previous, ...saved }));
+            setF((previous) => ({ ...previous, ...saved }));
+          }}
+        />
+      )}
       {selOpen && (
         <SelectionModal
           candidate={cand}
@@ -2181,6 +2213,7 @@ const CandidateDetail = () => {
         />
       )}
     </div>
+    </WarekiErrorContext.Provider>
   );
 };
 
@@ -2755,6 +2788,7 @@ const CandidateList = () => {
   // 個人応募の「更新」は共通の選考更新モーダル（協力業者・DB適用前は従来の進捗モーダル）
   const [selMod, setSelMod] = useState(null);
   const openUpdate = (c) => (c.is_coop ? setProgMod(c) : setSelMod(c));
+  const [contactMod, setContactMod] = useState(null);
   const thList = { ...s.th, padding: "8px 10px" };
   const tdMid = { ...s.td, padding: "6px 10px", verticalAlign: "middle" };
 
@@ -2830,27 +2864,27 @@ const CandidateList = () => {
     return 0;
   });
 
-  // 連絡先：バッジを上段、電話番号・アドレスを下段
+  // 連絡先：代表連絡先のバッジを上段、電話番号・アドレスを下段（他にも登録があれば件数を添える）。
+  // 代表の指定先が空なら、登録済みの TEL → Email の順で最初のものを代表として表示する
   const renderContact = (c) => {
-    const isE = c.primary_contact?.startsWith("email");
-    const idx = parseInt(c.primary_contact?.split("_")[1] || 0);
-    if (isE && c.email && c.email[idx])
-      return (
-        <div className="nks-contact">
+    const primary = resolvePrimary(c);
+    if (!primary) return <span>-</span>;
+    const total = [...contactList(c.tel), ...contactList(c.email)].filter((v) => v.trim()).length;
+    return (
+      <div className="nks-contact" title="代表連絡先">
+        {primary.kind === "email" ? (
           <span className="nks-contact-badge is-mail">メール</span>
-          <a href={`mailto:${c.email[idx]}`} className="nks-contact-value">
-            {c.email[idx]}
-          </a>
-        </div>
-      );
-    if (c.tel && c.tel[idx])
-      return (
-        <div className="nks-contact">
+        ) : (
           <span className="nks-contact-badge is-tel">TEL</span>
-          <span className="nks-contact-value">{c.tel[idx]}</span>
-        </div>
-      );
-    return <span>-</span>;
+        )}
+        {primary.kind === "email" ? (
+          <a href={`mailto:${primary.value}`} className="nks-contact-value">{primary.value}</a>
+        ) : (
+          <span className="nks-contact-value">{primary.value}</span>
+        )}
+        {total > 1 && <span className="nks-contact-more">他{total - 1}件</span>}
+      </div>
+    );
   };
 
   // 終了・削除済タブの補足（終了理由・終了日。日付が分からない場合は推測しない）
@@ -2992,7 +3026,19 @@ const CandidateList = () => {
                             ? "-"
                             : calcCurrentAge(c.birth_date) || c.age || "-"}
                         </td>
-                        <td style={tdMid}>{renderContact(c)}</td>
+                        <td style={tdMid}>
+                          <div className="nks-list-cell">
+                            <div className="nks-list-cell-main">{renderContact(c)}</div>
+                            <button
+                              type="button"
+                              onClick={() => setContactMod(c)}
+                              className="nks-row-btn"
+                              aria-label={`${c.name_kanji || ""}の連絡先を編集`}
+                            >
+                              編集
+                            </button>
+                          </div>
+                        </td>
                         <td style={tdMid}>
                           <div className="nks-list-cell">
                             <div className="nks-list-cell-main">
@@ -3087,6 +3133,14 @@ const CandidateList = () => {
           onUnavailable={() => { setProgMod(selMod); setSelMod(null); }}
         />
       )}
+      {contactMod && (
+        <ContactModal
+          candidateId={contactMod.id}
+          name={contactMod.name_kanji}
+          onClose={() => setContactMod(null)}
+          onSaved={fetchC}
+        />
+      )}
     </div>
   );
 };
@@ -3154,6 +3208,15 @@ const RegistrationForm = () => {
       finalNameKana = f.is_solo ? "個人事業主" : cleanText(f.company_name);
     }
 
+    // 空欄を除き、代表連絡先の番号を空欄除去後の位置に合わせる（TEL・Email とも空欄でも登録できる）
+    let contactValues;
+    try {
+      contactValues = normalizeContacts(f);
+    } catch (err) {
+      alert(err.message);
+      return;
+    }
+
     try {
       const res = await apiFetch("/api/candidates", {
         method: "POST",
@@ -3163,8 +3226,7 @@ const RegistrationForm = () => {
           name_kanji: cleanText(f.name_kanji),
           name_kana: finalNameKana, // 決定した値を送る
           status: initialStatus,
-          tel: f.tel.filter((t) => t !== ""),
-          email: f.email.filter((e) => e !== ""),
+          ...contactValues,
         }),
       });
       if (res.ok) {

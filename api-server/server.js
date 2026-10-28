@@ -6,6 +6,7 @@ const selectionFlow = require("./selectionFlow");
 const selection = require("./selectionService");
 const { createPgSelectionStore, dateColumn } = require("./selectionPgStore");
 const { buildFacts } = require("./dashboardFacts");
+const contacts = require("./contactService");
 require("dotenv").config();
 
 const app = express();
@@ -16,6 +17,7 @@ auth.install(app);
 const PORT = process.env.PORT || 5000;
 const optionalText = value => typeof value === "string" && value.trim() ? value.trim() : null;
 const selectionStore = createPgSelectionStore(db);
+const contactStore = contacts.createPgContactStore(db);
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 // 個人応募の選考列は、選考履歴テーブルが存在する間（$69）は選考履歴APIだけが更新する。
 // 送られなかった選考列は保持する（$70〜$77 は各列が送られたかどうか）。
@@ -24,7 +26,13 @@ const PUT_SELECTION_FLAGS = [
   ["interview_2_date", "$10", "$73"], ["expected_join_date", "$43", "$74"], ["contact_history", "$47", "$75"],
   ["interview_2_attendee", "$48", "$76"], ["applied_at", "$49", "$77"],
 ];
-const legacySelectionWrite = "(is_coop IS TRUE OR NOT $69::boolean)";
+const isLongYear = value => (typeof value === "string" ? /^\s*\d{5,}\s*$/.test(value) : Number.isInteger(value) && value > 9999);
+const longYearFields = b => [
+  b.graduation_year,
+  ...(Array.isArray(b.work_history) ? b.work_history.flatMap(w => [w?.start_year, w?.end_year]) : []),
+  ...(Array.isArray(b.licenses) ? b.licenses.map(l => l?.date) : []),
+].filter(isLongYear);
+const legacySelectionWrite ="(is_coop IS TRUE OR NOT $69::boolean)";
 const putSelectionSet = column => {
   const [, value, flag] = PUT_SELECTION_FLAGS.find(([name]) => name === column);
   return `${column}=CASE WHEN ${flag}::boolean AND ${legacySelectionWrite} THEN ${value} ELSE ${column} END`;
@@ -217,6 +225,14 @@ app.put("/api/candidates/:id", async (req, res) => {
   let offerDate;
   try { offerDate = normalizeOfferDate(b.offer_date); }
   catch { return res.status(400).json({ error: "Invalid offer date" }); }
+  // 生年月日の5桁以上の年（標準カレンダーで入力できてしまう値）は保存しない
+  if (typeof b.birth_date === "string" && /^[+-]?\d{5,}/.test(b.birth_date.trim())) {
+    return res.status(400).json({ error: "生年月日は西暦4桁で入力してください" });
+  }
+  // 卒業年・職歴の入社年／退社年・資格の取得年の5桁以上の年も保存しない（その他の既存の記載は従来どおり）
+  if (longYearFields(b).length) {
+    return res.status(400).json({ error: "年は西暦4桁で入力してください" });
+  }
   let client;
   try {
     // 応募者行のロック → 選考履歴の有無の確認 → 判定 → 更新 を1トランザクションで行う。
@@ -242,7 +258,7 @@ app.put("/api/candidates/:id", async (req, res) => {
     }
     await client.query(
       `UPDATE candidates SET
-        name_kanji=$1, name_kana=$2, age=$3, birth_year=$4, tel=$5, email=$6,
+        name_kanji=$1, name_kana=$2, age=$3, birth_year=$4, tel=COALESCE($5, tel), email=COALESCE($6, email),
         ${putSelectionSet("status")}, ${putSelectionSet("decline_reason")},
         ${putSelectionSet("interview_1_date")}, ${putSelectionSet("interview_2_date")},
         motivation_memo=$11, prev_salary=$12, desired_salary=$13, commute_method=$14, 
@@ -267,8 +283,10 @@ app.put("/api/candidates/:id", async (req, res) => {
         b.name_kana,
         b.age || null,
         b.birth_year || null,
-        JSON.stringify(b.tel || []),
-        JSON.stringify(b.email || []),
+        // 連絡先は連絡先API（PATCH /contacts）だけが更新する。古い画面の全項目保存で上書きしないよう、
+        // $5・$6 は常に NULL を渡して現在の値を保持する
+        null,
+        null,
         b.status,
         b.decline_reason,
         b.interview_1_date || null,
@@ -365,6 +383,17 @@ app.patch("/api/candidates/:id/selection/applied-date", selectionRoute(req =>
   selection.setAppliedDate(selectionStore, req.params.id, req.body, selectionActor(req))));
 app.patch("/api/candidates/:id/selection/contact-history", selectionRoute(req =>
   selection.setContactHistory(selectionStore, req.params.id, req.body, selectionActor(req))));
+
+// --- 連絡先 API（TEL・Email・代表連絡先のみ。画面が読み込んだ時点の値と違う場合は409） ---
+app.patch("/api/candidates/:id/contacts", async (req, res) => {
+  try {
+    res.json(await contacts.updateContacts(contactStore, req.params.id, req.body));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message, code: err.code, field: err.field, current: err.current });
+    console.error("Contact update failed");
+    res.status(500).json({ error: "連絡先を保存できませんでした" });
+  }
+});
 
 // 論理削除（非表示）
 app.delete("/api/candidates/:id", async (req, res) => {

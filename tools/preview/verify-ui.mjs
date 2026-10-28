@@ -168,7 +168,15 @@ try {
     return q("expense") === "¥420,000" && q("joins") === "2" && q("unit") === "¥210,000" && yen(q("unit")) === Math.round(yen(q("expense")) / Number(q("joins")))
       && document.querySelector("[data-kpi='cost']").textContent.includes("※採用単価");
   })()`));
-  ok("ダッシュボード：実施未確認ありの注意をKPIの近くに表示（ツールチップで詳細）", await evaluate(`(() => { const n = [...document.querySelectorAll("[data-kpi='interviewed'] .nks-kpi-note")].find(x => x.textContent === "実施未確認あり"); return !!n && n.title.includes("5回（4人）"); })()`));
+  // 実施未確認は「今期（8/1〜）で基準日（as_of）までに予定日を過ぎた旧データの面接」なので、期待値は実行日の基準日で数える
+  //（架空データの面接予定日が過ぎると件数が増えるため、固定値にしない）
+  ok("ダッシュボード：実施未確認ありの注意をKPIの近くに表示（ツールチップで詳細）", await evaluate(`(async () => {
+    const body = await (await fetch("/api/dashboard/facts", { credentials: "include" })).json();
+    const [y, m] = body.as_of.split("-").map(Number), start = (m >= 8 ? y : y - 1) + "-08-01";
+    const due = body.facts.filter(f => !f.coop).flatMap(f => (f.unconfirmed || []).filter(i => i.date >= start && i.date <= body.as_of).map(() => f.id));
+    const n = [...document.querySelectorAll("[data-kpi='interviewed'] .nks-kpi-note")].find(x => x.textContent === "実施未確認あり");
+    return due.length >= 5 && !!n && n.title.includes(due.length + "回（" + new Set(due).size + "人）");
+  })()`));
   ok("ダッシュボード：赤は注意情報のみ（KPIの数字は赤にしない）", await evaluate(`[...document.querySelectorAll(".nks-kpi-num, [data-cost] ")].every(n => getComputedStyle(n).color !== "rgb(230, 0, 18)")`));
   ok("ダッシュボード：現在の選考状況は現在値と明示", await evaluate(`document.querySelector(".nks-now h3").textContent.includes("現在値") && document.querySelectorAll(".nks-now-item").length === 6`));
   ok("ダッシュボード：参考情報ブロック（旧データ一覧・長い定義・部長会の旧集計）を通常画面から撤去", await evaluate(`(() => { const t = document.querySelector(".nks-dash").textContent; return !document.querySelector(".nks-ref") && !t.includes("部長会") && !t.includes("期別実績には含めていません") && !t.includes("集計の定義"); })()`));

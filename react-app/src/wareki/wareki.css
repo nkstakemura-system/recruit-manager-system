@@ -1,0 +1,10 @@
+/* 和暦入力（生年月日・卒業年・職歴・資格） */
+.nks-wareki-toggle { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; font-size: 12px; font-weight: 400; color: var(--nks-muted); cursor: pointer; white-space: nowrap; vertical-align: middle; }
+.nks-wareki-toggle input { margin: 0; }
+.nks-wareki-field { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
+.nks-wareki-row { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--nks-ink); flex-wrap: wrap; }
+.nks-wareki-era { height: 34px; padding: 0 4px; border: 1px solid var(--nks-border); border-radius: 6px; background: #fff; font-size: 13px; color: #000; }
+.nks-wareki-num { width: 46px; min-height: 0; height: 34px; padding: 0 6px; border: 1px solid var(--nks-border); border-radius: 6px; font-size: 14px; text-align: right; color: #000; }
+.nks-wareki-hint { font-size: 11px; color: var(--nks-muted); line-height: 1.4; white-space: nowrap; }
+.nks-wareki-error { font-size: 11px; color: #b4000e; line-height: 1.4; }
+.nks-wareki-label-row { display: flex; align-items: baseline; margin-bottom: 6px; }

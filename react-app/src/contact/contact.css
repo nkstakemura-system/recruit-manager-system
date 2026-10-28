@@ -1,0 +1,12 @@
+/* 連絡先の編集モーダル・一覧の代表連絡先 */
+.nks-contact-modal { width: min(100%, 460px); }
+.nks-contact-modal-name { margin-left: 10px; font-size: 13px; font-weight: 400; color: var(--nks-muted); }
+.nks-contact-section { padding: 14px 0; }
+.nks-contact-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.nks-contact-input { flex: 1; min-width: 0; }
+.nks-contact-primary { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700; color: var(--nks-muted); white-space: nowrap; cursor: pointer; }
+.nks-contact-primary.is-on { color: var(--nks-navy); }
+.nks-contact-footer { gap: 8px; }
+.nks-contact-more { font-size: 11px; color: var(--nks-muted); }
+.nks-contact-side-row { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; overflow-wrap: anywhere; }
+.nks-contact-side-mark { flex: none; font-size: 10px; font-weight: 700; color: #fff; background: var(--nks-navy); border-radius: 3px; padding: 0 4px; }
