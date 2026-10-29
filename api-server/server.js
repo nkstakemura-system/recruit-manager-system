@@ -7,6 +7,8 @@ const selection = require("./selectionService");
 const { createPgSelectionStore, dateColumn } = require("./selectionPgStore");
 const { buildFacts } = require("./dashboardFacts");
 const contacts = require("./contactService");
+const marketing = require("./jobMarketingService");
+const { createPgMarketingStore } = require("./jobMarketingPgStore");
 require("dotenv").config();
 
 const app = express();
@@ -18,6 +20,7 @@ const PORT = process.env.PORT || 5000;
 const optionalText = value => typeof value === "string" && value.trim() ? value.trim() : null;
 const selectionStore = createPgSelectionStore(db);
 const contactStore = contacts.createPgContactStore(db);
+const marketingStore = createPgMarketingStore(db);
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 // 個人応募の選考列は、選考履歴テーブルが存在する間（$69）は選考履歴APIだけが更新する。
 // 送られなかった選考列は保持する（$70〜$77 は各列が送られたかどうか）。
@@ -394,6 +397,27 @@ app.patch("/api/candidates/:id/contacts", async (req, res) => {
     res.status(500).json({ error: "連絡先を保存できませんでした" });
   }
 });
+// --- 求人分析 API（第4弾。応募者情報は扱わない。テーブル未作成時は ready:false / 503） ---
+const marketingRoute = handler => async (req, res) => {
+  try {
+    res.json(await handler(req));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message, code: err.code, fields: err.fields, problems: err.problems });
+    console.error("Job marketing operation failed");
+    res.status(500).json({ error: "求人分析のデータを保存できませんでした" });
+  }
+};
+app.get("/api/job-marketing", marketingRoute(() => marketing.overview(marketingStore)));
+app.post("/api/job-marketing/categories", marketingRoute(req => marketing.createCategory(marketingStore, req.body, selectionActor(req))));
+app.patch("/api/job-marketing/categories/:id", marketingRoute(req => marketing.updateCategory(marketingStore, req.params.id, req.body, selectionActor(req))));
+app.post("/api/job-marketing/plan-events", marketingRoute(req => marketing.savePlanEvent(marketingStore, req.body, selectionActor(req))));
+app.post("/api/job-marketing/plan-events/:id/void", marketingRoute(req => marketing.voidPlanEvent(marketingStore, req.params.id, req.body, selectionActor(req))));
+app.post("/api/job-marketing/records", marketingRoute(req => marketing.saveRecord(marketingStore, req.body, selectionActor(req))));
+app.post("/api/job-marketing/records/:id/void", marketingRoute(req => marketing.voidRecord(marketingStore, req.params.id, req.body, selectionActor(req))));
+app.post("/api/job-marketing/imports", marketingRoute(req => marketing.importCsv(marketingStore, req.body, selectionActor(req))));
+app.post("/api/job-marketing/references", marketingRoute(req => marketing.createReference(marketingStore, req.body, selectionActor(req))));
+app.put("/api/job-marketing/references/:id", marketingRoute(req => marketing.updateReference(marketingStore, req.params.id, req.body, selectionActor(req))));
+app.delete("/api/job-marketing/references/:id", marketingRoute(req => marketing.deleteReference(marketingStore, req.params.id, selectionActor(req))));
 
 // 論理削除（非表示）
 app.delete("/api/candidates/:id", async (req, res) => {

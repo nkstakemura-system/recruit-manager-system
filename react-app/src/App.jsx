@@ -14,6 +14,7 @@ import RecruitmentStats from "./RecruitmentStats";
 import SelectionModal from "./selection/SelectionModal";
 import SelectionTimeline from "./selection/SelectionTimeline";
 import Dashboard from "./dashboard/PeriodDashboard";
+import JobMarketing from "./marketing/JobMarketing";
 import { selectionApi, mirrorForForm, SELECTION_OWNED_FIELDS } from "./selection/selectionApi";
 import ContactModal from "./contact/ContactModal";
 import "./contact/contact.css";
@@ -3999,6 +4000,22 @@ const IcoChart = () => (
   </svg>
 );
 
+// --- 求人分析アイコン（第4弾） ---
+const IcoFunnel = () => (
+  <svg
+    width="20"
+    height="20"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M3 4h18l-7 8v6l-4 2v-8z" />
+  </svg>
+);
+
 // --- サイドバー ---
 const Sidebar = () => {
   const [open, setOpen] = useState(false);
@@ -4059,6 +4076,7 @@ const Sidebar = () => {
       <Nav to="/expenses" l="採用経費" ic={<IcoMoney />} />
       {/* ★ ここに追加！ */}
       <Nav to="/stats" l="統計ダッシュボード" ic={<IcoChart />} />
+      <Nav to="/job-marketing" l="求人分析" ic={<IcoFunnel />} />
     </nav>
   );
 };
@@ -4075,6 +4093,7 @@ function ManagementApp() {
           <Route path="/candidates/:id" element={<CandidateDetail />} />
           <Route path="/expenses" element={<ExpensePage />} />
           <Route path="/stats" element={<RecruitmentStats />} />
+          <Route path="/job-marketing" element={<JobMarketing />} />
         </Routes>
       </div>
     </Router>

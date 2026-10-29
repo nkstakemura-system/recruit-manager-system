@@ -5,6 +5,8 @@
 //
 // 起動: node tools/preview/preview-server.cjs            （選考履歴テーブルありの状態）
 //       node tools/preview/preview-server.cjs --no-history-table （DB適用前の状態：従来の進捗更新）
+//       node tools/preview/preview-server.cjs --no-marketing-table（求人分析のテーブル未作成の状態）
+//       node tools/preview/preview-server.cjs --real-csv <フォルダ>（実際のCSVを「確認待ち」として画面に渡す。自動では登録しない）
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -16,6 +18,8 @@ const selection = require(path.join(root, "api-server", "selectionService.js"));
 const { createMemorySelectionStore } = require(path.join(root, "api-server", "selectionMemoryStore.js"));
 const { buildFacts } = require(path.join(root, "api-server", "dashboardFacts.js"));
 const contacts = require(path.join(root, "api-server", "contactService.js"));
+const marketing = require(path.join(root, "api-server", "jobMarketingService.js"));
+const { createMemoryMarketingStore } = require(path.join(root, "api-server", "jobMarketingMemoryStore.js"));
 
 const dist = path.join(root, "react-app", "dist");
 const indexPath = path.join(dist, "index.html");
@@ -62,6 +66,74 @@ const expenses = [
 ];
 const store = createMemorySelectionStore(candidates, { ready: historyTable });
 const contactStore = contacts.createMemoryContactStore(candidates);
+const marketingTable = !process.argv.includes("--no-marketing-table");
+const marketingStore = createMemoryMarketingStore({ ready: marketingTable });
+
+// 実CSVの確認（--real-csv <フォルダ>）。Indeedのレポート（EngagementSummary_*.csv）と旧管理CSV（求人マーケティング*.csv）だけを読み取り、
+// メモリ上に「確認待ち」として保持する。職種・年・「応募」の意味などは画面で利用者が確定し、取込後もメモリ内のみ（DB・Gitには入らない）。
+// このモードでは架空の求人分析データは登録しない（実データと混ざらないようにする）。
+const realCsvAt = process.argv.indexOf("--real-csv");
+const realCsvDir = realCsvAt > 0 && process.argv[realCsvAt + 1] ? path.resolve(process.argv[realCsvAt + 1]) : null;
+const pendingFiles = [];
+if (realCsvAt > 0 && !realCsvDir) throw new Error("--real-csv にはCSVのフォルダを指定してください");
+if (realCsvDir) {
+  for (const name of fs.readdirSync(realCsvDir).filter(n => /^(EngagementSummary_[\w-]*|求人マーケティング.*)\.csv$/i.test(n)).sort()) {
+    const bytes = fs.readFileSync(path.join(realCsvDir, name));
+    if (bytes.length > 2 * 1024 * 1024) continue;
+    pendingFiles.push({ name, size: bytes.length, hash: crypto.createHash("sha256").update(bytes).digest("hex"), base64: bytes.toString("base64") });
+  }
+}
+async function pendingList() {
+  const view = await marketing.overview(marketingStore);
+  const activeImports = new Set(view.records.filter(r => r.state === "active" && r.import_id).map(r => r.import_id));
+  const imported = new Set(view.imports.filter(i => activeImports.has(i.id)).map(i => i.file_hash));
+  return { files: pendingFiles.map(p => ({ ...p, imported: imported.has(p.hash) })) };
+}
+
+// 求人分析の架空実績（第4弾）。本番と同じ jobMarketingService で登録する。
+// * 営業：7・8月は月間合計（無料）、9/1〜10/26は日別（架空のCSV取込）。10/14に無料→有料へ切替（日別のため切替日で正確に分かれる）
+// * 電気工事士：8月（無料）・9月（9/15に有料へ切替。月間合計しかないため「内訳不明」）・10月（有料）
+// CADオペ（ときがわ）・CADオペ（本社）は、実際のCSVの取込確認用に未登録のまま残す。
+async function seedMarketing() {
+  const { categories } = await marketing.overview(marketingStore);
+  const id = name => categories.find(c => c.name === name).id;
+  const by = "preview-seed@web";
+  const save = (name, start, end, values, extra = {}) => marketing.saveRecord(marketingStore, {
+    record: { category_id: id(name), media: "Indeed", period_start: start, period_end: end, plan_type: "free", ...values }, ...extra,
+  }, by);
+  const plan = (name, status, effective_date, extra = {}) => marketing.savePlanEvent(marketingStore, { category_id: id(name), status, effective_date, ...extra }, by);
+
+  await plan("営業", "free", "2026-07-01", { note: "架空：初回掲載（無料）" });
+  await save("営業", "2026-07-01", "2026-07-31", { impressions: 820, clicks: 41, apply_starts: 3, applies: 2, note: "架空：初回掲載" });
+  await save("営業", "2026-08-01", "2026-08-31", { impressions: 760, clicks: 18, apply_starts: 1, applies: 1, note: "架空：タイトルを「法人営業スタッフ」に変更" });
+  // 架空の日別データ（決まった計算式で作る。10/14以降は表示・クリックが多く、1日1,000円の費用あり）
+  const daily = [];
+  for (let t = Date.UTC(2026, 8, 1), i = 0; t <= Date.UTC(2026, 9, 26); t += 86400000, i += 1) {
+    const date = new Date(t).toISOString().slice(0, 10);
+    const paid = date >= "2026-10-14";
+    const wave = (i * 7) % 11;
+    daily.push({
+      date, impressions: (paid ? 96 : 42) + wave * (paid ? 3 : 1), clicks: (paid ? 5 : 2) + (wave % 3), apply_starts: i % (paid ? 3 : 6) === 0 ? 1 : 0,
+      applies: i % (paid ? 6 : 12) === 0 ? 1 : 0, cost: paid ? 1000 : null,
+    });
+  }
+  await marketing.importCsv(marketingStore, {
+    file_name: "EngagementSummary_20260901_20261026_架空.csv", file_hash: "f".repeat(63) + "1", format: "indeed",
+    entries: [{ record: { category_id: id("営業"), media: "Indeed", period_start: "2026-09-01", period_end: "2026-10-26", plan_type: "unknown", daily, note: "架空：9/10 給与表記を月給に統一、10/14 タイトルに「未経験歓迎」を追加" } }],
+  }, by);
+  await plan("営業", "paid", "2026-10-14", { budget: "30000", note: "架空：タイトル変更と同時に有料掲載（1日1,000円）" });
+
+  await plan("電気工事士", "free", "2026-08-01");
+  await save("電気工事士", "2026-08-01", "2026-08-31", { impressions: 240, clicks: 9, apply_starts: 0, applies: 0, note: "架空：タイトルキャッチコピー変更" });
+  await save("電気工事士", "2026-09-01", "2026-09-30", { impressions: 410, clicks: 16, apply_starts: null, applies: 1, plan_type: "unknown", note: "架空：9/15から有料掲載（月間合計のみ）" });
+  await plan("電気工事士", "paid", "2026-09-15", { budget: "15000" });
+  await save("電気工事士", "2026-10-01", "2026-10-26", { impressions: 620, clicks: 25, apply_starts: 3, applies: 1, plan_type: "paid", cost: 13000 });
+
+  const ref = (name, values) => marketing.createReference(marketingStore, { category_id: id(name), ...values }, by);
+  await ref("電気工事士", { company_name: "架空電設株式会社", job_title: "電気工事士（未経験可）", url: "https://example.com/jobs/denki-1", memo: "架空：資格手当の金額を明記", checked_on: "2026-10-20" });
+  await ref("電気工事士", { company_name: "架空電工有限会社", memo: "架空：URL未登録の例" });
+  await ref("営業", { company_name: "架空商事株式会社", job_title: "ルート営業", url: "https://example.org/sales?id=1", checked_on: "2026-10-15" });
+}
 
 // 架空の選考履歴（実際の操作と同じく selectionService 経由で追記する）
 async function seedHistory() {
@@ -125,7 +197,7 @@ async function selectionCall(res, work) {
   try {
     send(res, 200, await work());
   } catch (err) {
-    send(res, err.status || 500, { error: err.status ? err.message : "Local preview error", code: err.code, fields: err.fields });
+    send(res, err.status || 500, { error: err.status ? err.message : "Local preview error", code: err.code, fields: err.fields, problems: err.problems });
   }
 }
 const actor = "preview@web";
@@ -142,6 +214,27 @@ async function api(req, res, pathname) {
   if (pathname === "/api/auth/logout" && method === "POST")
     return send(res, 200, { ok: true }, { "Set-Cookie": `${cookieName}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0` });
   if (!signedIn(req)) return send(res, 401, { error: "Authentication required" });
+
+  // 本番と同じ求人分析API（jobMarketingService）をメモリ保存先で実行する
+  if (pathname === "/api/job-marketing" && method === "GET")
+    return selectionCall(res, async () => ({ ...(await marketing.overview(marketingStore)), ...(realCsvDir ? { preview_pending_files: true } : {}) }));
+  if (pathname === "/api/job-marketing/pending-files" && method === "GET") return selectionCall(res, pendingList);
+  const jm = /^\/api\/job-marketing\/(categories|plan-events|records|imports|references)(?:\/(\d+)(?:\/(void))?)?$/.exec(pathname);
+  if (jm) {
+    const [, kind, itemId, action] = jm;
+    const body = method === "GET" || method === "DELETE" ? {} : await readBody(req);
+    if (kind === "categories" && !itemId && method === "POST") return selectionCall(res, () => marketing.createCategory(marketingStore, body, actor));
+    if (kind === "categories" && itemId && method === "PATCH") return selectionCall(res, () => marketing.updateCategory(marketingStore, itemId, body, actor));
+    if (kind === "plan-events" && !itemId && method === "POST") return selectionCall(res, () => marketing.savePlanEvent(marketingStore, body, actor));
+    if (kind === "plan-events" && itemId && action === "void" && method === "POST") return selectionCall(res, () => marketing.voidPlanEvent(marketingStore, itemId, body, actor));
+    if (kind === "records" && !itemId && method === "POST") return selectionCall(res, () => marketing.saveRecord(marketingStore, body, actor));
+    if (kind === "records" && itemId && action === "void" && method === "POST") return selectionCall(res, () => marketing.voidRecord(marketingStore, itemId, body, actor));
+    if (kind === "imports" && !itemId && method === "POST") return selectionCall(res, () => marketing.importCsv(marketingStore, body, actor));
+    if (kind === "references" && !itemId && method === "POST") return selectionCall(res, () => marketing.createReference(marketingStore, body, actor));
+    if (kind === "references" && itemId && method === "PUT") return selectionCall(res, () => marketing.updateReference(marketingStore, itemId, body, actor));
+    if (kind === "references" && itemId && method === "DELETE") return selectionCall(res, () => marketing.deleteReference(marketingStore, itemId, actor));
+    return send(res, 404, { error: "Not found" });
+  }
 
   // 本番と同じ選考履歴API（selectionService）をメモリ保存先で実行する
   const sel = /^\/api\/candidates\/(\d+)\/selection(?:\/(events|applied-date|contact-history)(?:\/([\w-]+)\/(correction|void))?)?$/.exec(pathname);
@@ -246,7 +339,7 @@ const contentTypes = {
   ".svg": "image/svg+xml", ".json": "application/json; charset=utf-8", ".png": "image/png", ".ico": "image/x-icon",
 };
 
-(historyTable ? seedHistory() : Promise.resolve()).then(() => http.createServer(async (req, res) => {
+(historyTable ? seedHistory() : Promise.resolve()).then(() => marketingTable && !realCsvDir ? seedMarketing() : null).then(() => http.createServer(async (req, res) => {
   try {
     const pathname = new URL(req.url, `http://${host}:${port}`).pathname;
     if (pathname.startsWith("/api/")) return await api(req, res, pathname);
@@ -263,5 +356,7 @@ const contentTypes = {
   console.log(`URL: http://${host}:${port}/`);
   console.log("ログイン名: preview / パスワード: preview-only");
   console.log(historyTable ? "モード: 選考履歴テーブルあり（第2弾の新しい選考更新）" : "モード: 選考履歴テーブルなし（DB適用前の従来動作）");
+  if (realCsvDir) console.log(`求人分析: 実CSV ${pendingFiles.length}件を確認待ちとして読み込み（未登録・メモリ内のみ）：${pendingFiles.map(p => p.name).join("、")}`);
+  else console.log(marketingTable ? "求人分析: 架空実績あり（営業・電気工事士に無料→有料の切替。CADオペ2職種はCSV取込確認用に未登録）" : "求人分析: テーブル未作成の状態");
   console.log(`架空データ ${candidates.length} 件。更新はメモリ内のみで、終了すると消えます。終了: Ctrl+C`);
 }));

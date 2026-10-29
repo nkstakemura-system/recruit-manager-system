@@ -1,0 +1,313 @@
+/* 求人分析（第4弾）。NKSの紺を基本色、赤は重要な注意だけ。左寄せ・F型の視線誘導。本文14〜16px、KPIの数値は大きく */
+.jm-page { flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: clamp(14px, 2vw, 28px); color: var(--nks-ink); font-size: 14px; line-height: 1.6; }
+.jm-page > * { max-width: 1200px; }
+.jm-h2 { font-size: 22px; margin: 0; color: var(--nks-navy); letter-spacing: .02em; }
+
+/* 1. 操作（対象月・職種・CSV取込・実績登録） */
+.jm-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 12px; }
+.jm-bar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.jm-month { display: inline-flex; align-items: center; gap: 4px; }
+.jm-month button, .jm-month select { height: 38px; border: 1px solid var(--nks-border); border-radius: 8px; background: #fff; color: var(--nks-navy); font-size: 15px; font-weight: 700; }
+.jm-month button { width: 38px; padding: 0; font-size: 18px; }
+.jm-month button:disabled { opacity: .35; }
+.jm-month select { padding: 0 10px; }
+.jm-btn { height: 38px; padding: 0 16px; border: 1px solid var(--nks-border); border-radius: 8px; background: #fff; color: var(--nks-navy); font-size: 14px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.jm-btn:hover:not(:disabled) { border-color: var(--nks-navy); }
+.jm-btn:disabled { opacity: .45; cursor: default; }
+.jm-btn.is-primary { background: var(--nks-navy); border-color: var(--nks-navy); color: #fff; }
+.jm-btn.is-danger { background: #fff; border-color: #f2b8bd; color: var(--nks-red); }
+.jm-btn.is-small { height: 32px; padding: 0 12px; font-size: 13px; }
+.jm-link { border: 0; background: none; padding: 0; color: var(--nks-navy); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; font-size: 13px; cursor: pointer; }
+.jm-link.is-danger { color: var(--nks-red); }
+
+.jm-tabs { display: flex; gap: 4px; overflow-x: auto; border-bottom: 2px solid var(--nks-border); margin-bottom: 14px; scrollbar-width: thin; }
+.jm-tab { flex: none; display: inline-flex; align-items: center; gap: 8px; height: 42px; padding: 0 16px; border: 0; border-bottom: 3px solid transparent; margin-bottom: -2px; background: none; color: var(--nks-muted); font-size: 15px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.jm-tab:hover { color: var(--nks-navy); }
+.jm-tab.is-on { color: var(--nks-navy); border-bottom-color: var(--nks-navy); }
+.jm-tab.is-off { opacity: .6; }
+.jm-dot { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: #eef2f8; color: var(--nks-navy); }
+.jm-dot.is-paid { background: var(--nks-navy); color: #fff; }
+.jm-dot.is-stopped, .jm-dot.is-unknown { background: #eceef2; color: #5a6678; }
+
+/* 掲載状態 */
+.jm-plan-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 14px; }
+.jm-plan-label { font-size: 13px; font-weight: 700; color: var(--nks-muted); }
+.jm-plan-sep { flex: 0 0 1px; height: 22px; background: var(--nks-border); margin: 0 4px; }
+.jm-status { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 6px; font-size: 14px; font-weight: 700; white-space: nowrap; background: #eef2f8; color: var(--nks-navy); }
+.jm-status.is-paid { background: var(--nks-navy); color: #fff; }
+.jm-status.is-unknown, .jm-status.is-none { background: #f0f2f5; color: #5a6678; }
+.jm-status.is-stopped { background: #e3e6eb; color: #3b4656; }
+
+.jm-chip { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 9px; border-radius: 6px; font-size: 13px; font-weight: 700; background: #eef2f8; color: var(--nks-navy); white-space: nowrap; }
+.jm-chip.is-warn { background: #fff4e0; color: #7a4a00; }
+.jm-chip.is-alert { background: #fde8ea; color: var(--nks-red); }
+.jm-chip.is-muted { background: #f0f2f5; color: #6b7686; }
+.jm-sub { font-size: 13px; color: var(--nks-muted); margin: 6px 0 0; }
+.jm-sub.is-info { color: var(--nks-navy); background: #f2f6fb; border-radius: 6px; padding: 6px 10px; }
+.jm-meta { font-size: 12px; color: var(--nks-muted); margin: 4px 0 0; }
+.jm-lead { font-size: 15px; margin: 0 0 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.jm-error { color: var(--nks-red); font-size: 14px; font-weight: 700; margin: 10px 0; }
+.jm-alert { color: var(--nks-red); background: #fff5f6; border: 1px solid #f5c2c7; border-radius: 8px; padding: 10px 14px; font-weight: 700; margin: 0 0 14px; }
+.jm-ok { color: #1d5d3a; background: #e9f5ee; border-radius: 8px; padding: 8px 12px; font-size: 14px; margin: 0 0 12px; }
+.jm-notice { background: #f2f6fb; border-left: 4px solid var(--nks-navy); padding: 8px 12px; margin: 12px 0 0; font-weight: 700; color: var(--nks-navy); }
+.jm-note { white-space: pre-wrap; font-size: 13px; line-height: 1.7; margin: 6px 0 0; padding: 8px 10px; background: #f7f9fc; border-radius: 6px; overflow-wrap: anywhere; }
+
+/* ツールチップ（補足説明はホバー・フォーカスで表示） */
+.jm-tip { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin-left: 4px; border-radius: 50%; background: #e3e9f2; color: var(--nks-navy); font-size: 11px; font-weight: 700; cursor: help; flex: none; }
+.jm-tip::after { content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%); width: max-content; max-width: min(280px, 70vw); padding: 8px 10px; border-radius: 6px; background: var(--nks-navy); color: #fff; font-size: 12px; font-weight: 400; line-height: 1.6; white-space: normal; text-align: left; display: none; pointer-events: none; z-index: 30; }
+.jm-tip:hover::after, .jm-tip:focus::after { display: block; }
+
+/* 2. 主要KPI */
+.jm-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.jm-kpi { background: #fff; border: 1px solid var(--nks-border); border-radius: 12px; padding: 14px 18px; display: grid; gap: 2px; min-width: 0; }
+.jm-kpi-label { font-size: 14px; font-weight: 700; color: var(--nks-muted); }
+.jm-kpi-value { font-size: 34px; line-height: 1.15; color: var(--nks-navy); font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+.jm-kpi-sub { font-size: 13px; color: var(--nks-muted); }
+.jm-delta { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--nks-ink); }
+.jm-delta.is-up { color: #1d5d3a; }
+.jm-delta.is-down { color: #8a5300; }
+
+/* 3. 率 */
+.jm-rates { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+.jm-rate { background: #f6f8fb; border-radius: 10px; padding: 10px 14px; display: grid; gap: 0; min-width: 0; }
+.jm-rate-label { display: inline-flex; align-items: center; font-size: 13px; font-weight: 700; color: var(--nks-muted); }
+.jm-rate b { font-size: 22px; color: var(--nks-navy); font-variant-numeric: tabular-nums; }
+.jm-rate .jm-delta, .jm-rate .jm-sub { font-size: 12px; margin: 0; }
+
+.jm-empty { background: #fff; border: 1px dashed #b8c3d3; border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
+.jm-empty strong { font-size: 16px; color: var(--nks-navy); }
+
+/* カード */
+.jm-card { background: #fff; border: 1px solid var(--nks-border); border-radius: 12px; padding: 14px 18px; margin-bottom: 12px; min-width: 0; }
+.jm-card h3 { font-size: 16px; margin: 0 0 10px; color: var(--nks-navy); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.jm-h3-sub { font-size: 13px; font-weight: 400; color: var(--nks-muted); }
+.jm-h3-action { margin-left: auto; }
+.jm-fold-card { padding: 0; }
+.jm-fold-card > summary { display: flex; align-items: center; gap: 8px; padding: 14px 18px; font-size: 16px; font-weight: 700; color: var(--nks-navy); cursor: pointer; list-style: none; }
+.jm-fold-card > summary::-webkit-details-marker { display: none; }
+.jm-fold-card > summary::before { content: "▸"; font-size: 13px; color: var(--nks-muted); transition: transform .12s; }
+.jm-fold-card[open] > summary::before { transform: rotate(90deg); }
+.jm-fold-card > :not(summary) { margin-left: 18px; margin-right: 18px; }
+.jm-fold-card[open] { padding-bottom: 14px; }
+.jm-count { font-size: 12px; font-weight: 700; background: #eef2f8; border-radius: 10px; padding: 0 8px; color: var(--nks-navy); }
+.jm-fold-tool { margin-bottom: 6px; }
+.jm-fold > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--nks-navy); padding: 6px 0; display: inline-flex; gap: 8px; align-items: baseline; }
+.jm-fold > summary small { font-weight: 400; color: var(--nks-muted); }
+
+/* 4. 無料／有料の比較（左右2カード） */
+.jm-insufficient { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 0 0 10px; }
+.jm-insufficient strong { font-size: 14px; color: var(--nks-navy); background: #f0f2f5; border-radius: 6px; padding: 2px 10px; }
+.jm-insufficient span { font-size: 13px; color: var(--nks-muted); }
+.jm-vs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.jm-vs-card { border: 1px solid var(--nks-border); border-radius: 10px; padding: 12px 16px; min-width: 0; }
+.jm-vs-card.is-paid { border-color: #9aa9c2; box-shadow: inset 4px 0 0 var(--nks-navy); }
+.jm-vs-card.is-empty { background: #fafbfc; }
+.jm-vs-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.jm-vs-head .jm-sub { margin: 0; }
+.jm-vs-big { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin: 8px 0 6px; }
+.jm-vs-big b { font-size: 30px; color: var(--nks-navy); font-variant-numeric: tabular-nums; line-height: 1.2; }
+.jm-vs-big span { font-size: 13px; color: var(--nks-muted); font-weight: 700; }
+.jm-vs-big em { font-style: normal; font-size: 13px; color: var(--nks-muted); margin-left: auto; }
+.jm-vs-rows { display: grid; grid-template-columns: auto 1fr; gap: 0; margin: 0; font-size: 14px; }
+.jm-vs-rows dt, .jm-vs-rows dd { padding: 5px 0; border-top: 1px solid #edf0f5; margin: 0; }
+.jm-vs-rows dt { color: var(--nks-muted); font-weight: 700; padding-right: 12px; }
+.jm-vs-rows dd { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--nks-ink); }
+.jm-vs-rows dd small { display: inline-block; min-width: 72px; margin-left: 8px; font-weight: 400; color: var(--nks-muted); font-size: 12px; }
+
+/* 5. 月別推移：選択月の実績を1行にまとめ、グラフは展開時だけ（1指標ずつ・大きく） */
+.jm-month-card { display: grid; gap: 8px; justify-items: start; }
+.jm-month-sum { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 18px; }
+.jm-month-sum > strong { font-size: 16px; color: var(--nks-navy); }
+.jm-month-nums { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 14px; color: var(--nks-muted); }
+.jm-month-nums b { font-size: 20px; color: var(--nks-ink); margin: 0 2px; font-variant-numeric: tabular-nums; }
+.jm-chart-wrap { width: 100%; margin-top: 6px; }
+.jm-chart { display: flex; align-items: stretch; gap: 6px; margin-top: 16px; }
+.jm-chart-col { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column-reverse; cursor: pointer; border-radius: 6px; outline: none; }
+.jm-chart-col.is-future { cursor: default; }
+.jm-chart-col:focus-visible { box-shadow: 0 0 0 2px #8fa9d1; }
+.jm-chart-area { height: 216px; display: flex; flex-direction: column-reverse; align-items: center; border-bottom: 1px solid #b8c3d3; border-radius: 6px 6px 0 0; }
+.jm-chart-col.is-active .jm-chart-area { background: #f3f6fa; }
+.jm-chart-bar { display: block; width: min(56px, 72%); height: calc(var(--v) * 180px); min-height: 2px; background: var(--nks-navy); border-radius: 4px 4px 0 0; }
+.jm-chart-col.is-partial .jm-chart-bar { background: #9fb3d1; }
+.jm-chart-value { font-size: 13px; font-weight: 700; color: var(--nks-ink); margin-bottom: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.jm-chart-col.is-none .jm-chart-value, .jm-chart-col.is-missing .jm-chart-value { font-size: 11px; font-weight: 400; color: #8a96a8; }
+.jm-chart-col.is-overlap .jm-chart-value { font-size: 11px; color: var(--nks-red); }
+.jm-chart-month { text-align: center; font-size: 13px; color: var(--nks-muted); padding: 4px 0; }
+.jm-chart-col.is-selected .jm-chart-month { color: #fff; background: var(--nks-navy); border-radius: 4px; font-weight: 700; }
+.jm-chart-col.is-future .jm-chart-month { color: #c3cbd6; }
+.jm-chart-tip { position: absolute; top: 0; left: 50%; transform: translate(-50%, -100%); z-index: 20; width: max-content; max-width: 260px; padding: 6px 10px; border-radius: 6px; background: var(--nks-navy); color: #fff; font-size: 12px; line-height: 1.5; pointer-events: none; }
+.jm-chart-col:first-child .jm-chart-tip, .jm-chart-col:nth-child(2) .jm-chart-tip { left: 0; transform: translateY(-100%); }
+.jm-chart-col:last-child .jm-chart-tip, .jm-chart-col:nth-last-child(2) .jm-chart-tip { left: auto; right: 0; transform: translateY(-100%); }
+.jm-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 12px; font-weight: 400; color: var(--nks-muted); margin: 10px 0 0; }
+.jm-legend i { display: inline-block; width: 12px; height: 10px; border-radius: 2px; margin-left: 8px; }
+.jm-legend i:first-child { margin-left: 0; }
+.jm-legend i.is-bar { background: var(--nks-navy); }
+.jm-legend i.is-partial { background: #9fb3d1; }
+.jm-legend span { margin-left: 12px; }
+.jm-basis { margin: 0 0 10px; }
+.jm-basis b { color: var(--nks-navy); margin-right: 8px; }
+
+/* 確認待ちのCSV（ローカルプレビューのみ） */
+.jm-pending { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 14px; margin-bottom: 14px; background: #f2f6fb; border-left: 4px solid var(--nks-navy); border-radius: 6px; }
+.jm-pending > strong { display: inline-flex; align-items: center; color: var(--nks-navy); }
+.jm-pending-list { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; max-width: 100%; }
+.jm-pending-file span { overflow-wrap: anywhere; }
+.jm-pending-file { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 10px; border: 1px solid var(--nks-border); border-radius: 8px; background: #fff; color: var(--nks-ink); font-size: 13px; cursor: pointer; text-align: left; max-width: 100%; }
+.jm-pending-file:hover { border-color: var(--nks-navy); }
+.jm-pending-file em { font-style: normal; font-size: 12px; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: #fff4e0; color: #7a4a00; white-space: nowrap; }
+.jm-pending-file.is-done em { background: #e9f5ee; color: #1d5d3a; }
+
+/* 6. 自動分析コメント */
+.jm-analysis ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.jm-analysis li { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 0; border-bottom: 1px solid #edf0f5; }
+.jm-analysis li strong { font-size: 15px; color: var(--nks-ink); }
+.jm-analysis li p { margin: 2px 0 0; font-size: 14px; color: #3b4656; }
+.jm-level { display: inline-flex; justify-content: center; font-size: 12px; font-weight: 700; border-radius: 4px; padding: 2px 0; background: #eef2f8; color: var(--nks-navy); margin-top: 2px; }
+.jm-analysis li.is-check .jm-level { background: var(--nks-navy); color: #fff; }
+.jm-analysis li.is-good .jm-level { background: #e9f5ee; color: #1d5d3a; }
+.jm-analysis li.is-hold .jm-level { background: #f0f2f5; color: #5a6678; }
+
+/* 7. 履歴 */
+.jm-table-wrap { overflow-x: auto; }
+.jm-table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; min-width: 100%; }
+.jm-table th, .jm-table td { padding: 7px 10px; border-bottom: 1px solid #e6ebf2; text-align: right; white-space: nowrap; }
+.jm-table th:first-child, .jm-table td:first-child { text-align: left; }
+.jm-table th { color: var(--nks-muted); font-weight: 700; border-bottom: 2px solid var(--nks-border); }
+.jm-table.is-summary tbody tr { cursor: pointer; }
+.jm-table.is-summary tbody tr:hover td { background: #f7f9fc; }
+.jm-table.is-summary tr.is-selected td { background: #edf3fb; }
+.jm-table.is-summary td:last-child { text-align: left; }
+.jm-table.is-raw th, .jm-table.is-raw td { text-align: left; font-size: 12px; padding: 4px 8px; }
+.jm-plan-hist { list-style: none; margin: 0; padding: 0; }
+.jm-plan-hist li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 8px 0; border-bottom: 1px solid #edf0f5; }
+.jm-plan-hist li.is-voided { opacity: .55; }
+.jm-plan-hist .jm-sub { margin: 0; }
+.jm-plan-date { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 96px; }
+.jm-plan-note { flex-basis: 100%; font-size: 13px; color: #3b4656; white-space: pre-wrap; }
+.jm-refs { list-style: none; margin: 0 0 10px; padding: 0; }
+.jm-refs li { padding: 8px 0; border-bottom: 1px solid #edf0f5; }
+.jm-ref-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.jm-ref-url { display: block; font-size: 13px; color: #315d99; overflow-wrap: anywhere; margin-top: 2px; }
+.jm-hist-actions { display: inline-flex; gap: 14px; margin-left: auto; }
+.jm-hist-list { list-style: none; margin: 0; padding: 0; }
+.jm-hist { padding: 10px 0; border-bottom: 1px solid #e6ebf2; }
+.jm-hist.is-superseded, .jm-hist.is-voided { opacity: .6; }
+.jm-hist-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; }
+.jm-totals { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 13px; color: var(--nks-muted); }
+.jm-totals b { color: var(--nks-navy); font-size: 15px; margin-left: 2px; font-variant-numeric: tabular-nums; }
+.jm-check { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 400; }
+.jm-check input { width: 16px; height: 16px; }
+
+/* ダイアログ */
+.jm-backdrop { position: fixed; inset: 0; z-index: 200; display: flex; align-items: flex-start; justify-content: center; background: rgba(0, 26, 61, .22); padding: 4vh 16px; overflow-y: auto; max-width: none !important; }
+.jm-modal { width: min(560px, 100%); background: #fff; border: 1px solid var(--nks-border); border-radius: 12px; box-shadow: 0 12px 32px rgba(0, 26, 61, .18); }
+.jm-modal.is-wide { width: min(860px, 100%); }
+.jm-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 18px; border-bottom: 1px solid #e6ebf2; }
+.jm-modal-head strong { font-size: 17px; color: var(--nks-navy); }
+.jm-close { width: 34px; height: 34px; border: 1px solid var(--nks-border); border-radius: 8px; background: #fff; font-size: 18px; line-height: 1; cursor: pointer; }
+.jm-modal-body { padding: 16px 18px 18px; }
+.jm-form-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 12px; margin-bottom: 10px; }
+.jm-form-grid.is-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-top: 12px; }
+.jm-form-grid.is-two { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 12px; }
+.jm-form-grid .is-span { grid-column: 1 / -1; }
+.jm-form-grid label, .jm-block { display: grid; gap: 4px; align-content: start; font-size: 13px; font-weight: 700; color: var(--nks-ink); min-width: 0; }
+.jm-block { margin-top: 10px; }
+.jm-field-label { font-size: 13px; font-weight: 700; margin: 10px 0 6px; display: flex; align-items: center; }
+.jm-req { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700; color: var(--nks-red); }
+.jm-form-grid input, .jm-form-grid select, .jm-block textarea, .jm-input, .jm-fold textarea {
+  width: 100%; min-height: 40px; padding: 7px 10px; border: 1px solid var(--nks-border); border-radius: 8px; background: #fff; font-size: 15px; font-weight: 400; color: var(--nks-ink);
+}
+.jm-form-grid select.is-required { border-color: var(--nks-navy); box-shadow: 0 0 0 2px #dfe7f3; }
+.jm-seg { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.jm-seg label { display: inline-flex; align-items: center; min-height: 38px; padding: 0 16px; border: 1px solid var(--nks-border); border-radius: 8px; font-size: 14px; font-weight: 700; color: var(--nks-navy); cursor: pointer; white-space: nowrap; background: #fff; }
+.jm-seg label.is-on { background: var(--nks-navy); border-color: var(--nks-navy); color: #fff; }
+.jm-seg input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.jm-seg label:focus-within { outline: 2px solid #8fa9d1; outline-offset: 1px; }
+.jm-rate-preview { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; font-size: 13px; color: var(--nks-muted); margin-top: 8px; }
+.jm-rate-preview b { color: var(--nks-navy); font-size: 15px; font-variant-numeric: tabular-nums; }
+.jm-warn { margin: 8px 0 0; padding: 8px 12px 8px 28px; background: #fffaf0; border: 1px solid #f3dfb5; border-radius: 8px; font-size: 13px; line-height: 1.7; color: #6b4600; }
+.jm-warn li.is-error { color: var(--nks-red); font-weight: 700; }
+.jm-conflict { margin-top: 10px; padding: 10px 14px; border: 1px solid #f5c2c7; background: #fff7f8; border-radius: 8px; font-size: 14px; }
+.jm-conflict ul { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 6px; }
+.jm-conflict label { display: flex; gap: 8px; align-items: flex-start; }
+.jm-conflict-msg { margin: 0; font-weight: 700; color: var(--nks-red); }
+.jm-overlap-opt { display: grid; gap: 6px; margin-top: 6px; }
+.jm-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.jm-actions.is-left { justify-content: flex-start; margin-top: 10px; }
+.jm-confirm { display: grid; grid-template-columns: auto 1fr; gap: 0 16px; margin: 0; font-size: 15px; }
+.jm-confirm dt, .jm-confirm dd { padding: 8px 0; border-bottom: 1px solid #edf0f5; margin: 0; }
+.jm-confirm dt { color: var(--nks-muted); font-weight: 700; }
+.jm-confirm dd { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.jm-pre { white-space: pre-wrap; }
+
+/* 職種の管理：1職種1行（職種名・状態・編集） */
+.jm-cat-list { list-style: none; margin: 0 0 14px; padding: 0; border-top: 1px solid #edf0f5; }
+.jm-cat-list li { border-bottom: 1px solid #edf0f5; }
+.jm-cat-list li.is-open { background: #f8fafc; }
+.jm-cat-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 10px 4px; }
+.jm-cat-name { font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+.jm-state { font-size: 13px; font-weight: 700; padding: 2px 10px; border-radius: 12px; white-space: nowrap; }
+.jm-state.is-on { background: #eef2f8; color: var(--nks-navy); }
+.jm-state.is-off { background: #f0f2f5; color: #6b7686; }
+.jm-cat-edit { padding: 0 4px 12px; }
+.jm-cat-edit .jm-block { margin-top: 0; }
+.jm-cat-edit-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.jm-cat-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+
+/* CSV取込 */
+.jm-drop { display: grid; justify-items: center; gap: 10px; padding: 34px 16px; border: 2px dashed #b8c3d3; border-radius: 12px; background: #f8fafc; color: var(--nks-navy); text-align: center; transition: background .12s, border-color .12s; }
+.jm-drop strong { font-size: 16px; }
+.jm-drop.is-over { background: #edf3fb; border-color: var(--nks-navy); }
+.jm-filebar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 10px 12px; background: #f6f8fb; border-radius: 10px; }
+.jm-filename { font-size: 14px; overflow-wrap: anywhere; margin-right: 4px; }
+.jm-filebar .jm-btn { margin-left: auto; }
+.jm-raw { margin-top: 10px; }
+.jm-raw .jm-table-wrap { max-height: 220px; overflow: auto; border: 1px solid #edf0f5; border-radius: 8px; }
+.jm-import-card { border: 1px solid var(--nks-border); border-radius: 10px; padding: 12px 14px; margin-top: 12px; }
+.jm-import-card.is-off { opacity: .55; }
+.jm-import-card header { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-bottom: 4px; }
+.jm-import-card header strong { font-size: 15px; }
+.jm-import-card header .jm-sub { margin: 0; }
+.jm-import-card header input[type="checkbox"] { width: 18px; height: 18px; }
+.jm-import-card .jm-seg { margin-top: 4px; }
+.jm-import-card .jm-form-grid { margin-top: 10px; }
+.jm-suggest { justify-self: start; border: 1px dashed #8fa9d1; background: #f4f7fb; color: var(--nks-navy); border-radius: 6px; padding: 3px 10px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.jm-suggest small { font-weight: 400; color: var(--nks-muted); margin-left: 2px; }
+.jm-year { width: 96px; min-height: 36px; padding: 4px 8px; border: 1px solid var(--nks-navy); border-radius: 8px; font-size: 15px; }
+.jm-ref-picks { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.jm-import-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 16px; padding-top: 12px; border-top: 1px solid #e6ebf2; }
+.jm-import-foot .jm-actions { margin-top: 0; }
+.jm-check-status { font-size: 14px; font-weight: 700; color: var(--nks-muted); }
+.jm-check-status.is-ok { color: #1d5d3a; }
+.jm-check-status.is-ng { color: var(--nks-red); }
+
+@media (max-width: 1100px) {
+  .jm-rates { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 860px) {
+  .jm-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .jm-form-grid, .jm-form-grid.is-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .jm-page { padding: 12px 16px; }
+  .jm-bar-actions { width: 100%; }
+  .jm-bar-actions .jm-btn { flex: 1 1 auto; padding: 0 10px; }
+  .jm-kpi { padding: 10px 12px; }
+  .jm-kpi-value { font-size: 28px; }
+  .jm-rates { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .jm-vs { grid-template-columns: minmax(0, 1fr); }
+  .jm-chart { flex-direction: column; gap: 2px; }
+  .jm-chart-col { flex-direction: row; align-items: center; gap: 8px; }
+  .jm-chart-month { flex: none; width: 44px; text-align: right; padding: 2px 4px; }
+  .jm-chart-area { height: 30px; flex: 1; flex-direction: row; justify-content: flex-start; border-bottom: 0; border-left: 1px solid #b8c3d3; border-radius: 0 6px 6px 0; }
+  .jm-chart-bar { height: 18px; width: calc(var(--v) * (100% - 72px)); min-width: 2px; border-radius: 0 4px 4px 0; }
+  .jm-chart-value { margin: 0 0 0 6px; }
+  .jm-chart-tip, .jm-chart-col:first-child .jm-chart-tip, .jm-chart-col:nth-child(2) .jm-chart-tip, .jm-chart-col:last-child .jm-chart-tip, .jm-chart-col:nth-last-child(2) .jm-chart-tip { top: 100%; left: 52px; right: auto; transform: none; }
+  .jm-legend span { margin-left: 0; flex-basis: 100%; }
+  .jm-form-grid.is-two { grid-template-columns: minmax(0, 1fr); }
+  .jm-analysis li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .jm-level { justify-self: start; padding: 2px 8px; }
+  .jm-plan-sep { display: none; }
+  .jm-fold-card > :not(summary) { margin-left: 14px; margin-right: 14px; }
+  .jm-import-foot { flex-direction: column; align-items: stretch; }
+}

@@ -63,7 +63,7 @@ function serverHarness(mode = "development", rows = [], respond = null, customDb
       if (name === "./auth") return { createAuth: () => ({ install() {}, requireSession() {}, requireMeeting() {} }) };
       if (name === "./db") return db;
       if (name === "./offerDate") return offerModule;
-      if (["./selectionFlow", "./selectionService", "./selectionPgStore", "./dashboardFacts", "./contactService"].includes(name)) return requireLocal("." + name);
+      if (["./selectionFlow", "./selectionService", "./selectionPgStore", "./dashboardFacts", "./contactService", "./jobMarketingService", "./jobMarketingPgStore"].includes(name)) return requireLocal("." + name);
       if (name === "dotenv") return { config() {} };
       if (name === "path") return path;
       throw new Error("Unexpected dependency: " + name);
@@ -516,4 +516,19 @@ test("contact API route updates only tel/email/primary_contact under a row lock 
   await h.routes.get("patch /api/candidates/:id/contacts")({ params: { id: "5" }, body: { email: ["bad"], expected: current } }, invalid);
   assert.equal(invalid.code, 400);
   assert.equal(invalid.body.field, "email");
+});
+
+test("job marketing overview reports not ready before the migration and reads only its own tables", async () => {
+  const h = serverHarness("production", [], sql => sql.includes("to_regclass") ? [{ ready: false }] : []);
+  const res = h.response();
+  await h.routes.get("get /api/job-marketing")({}, res);
+  assert.equal(res.code, 200);
+  assert.equal(res.body.ready, false);
+  assert.equal(h.queries.length, 1);
+  assert.match(h.queries[0].sql, /job_marketing_records/);
+  const write = h.response();
+  await h.routes.get("post /api/job-marketing/records")({ body: { record: {} }, get: () => null }, write);
+  assert.equal(write.code, 503);
+  assert.equal(write.body.code, "marketing_unavailable");
+  assert.ok(h.queries.every(q => !/candidates|expenses/.test(q.sql)));
 });
