@@ -7,6 +7,20 @@
 //       node tools/preview/preview-server.cjs --no-history-table （DB適用前の状態：従来の進捗更新）
 //       node tools/preview/preview-server.cjs --no-marketing-table（求人分析のテーブル未作成の状態）
 //       node tools/preview/preview-server.cjs --real-csv <フォルダ>（実際のCSVを「確認待ち」として画面に渡す。自動では登録しない）
+//       node tools/preview/preview-server.cjs --real-csv <フォルダ> --seed-json <JSON>（既存実績のスナップショットを先に登録して、置き換えの確認をする。JSONはリポジトリに置かない）
+// 検証の基準日（PREVIEW_NOW=2026-10-29T12:00:00+09:00 など）。指定したときだけ、このプレビューの「現在時刻」を固定する
+// （日付に依存する検証を実行日によらず同じ結果にするため。アプリの処理は変更しない。本番では使わない）
+const PREVIEW_NOW = process.env.PREVIEW_NOW ? Date.parse(process.env.PREVIEW_NOW) : null;
+if (process.env.PREVIEW_NOW && !Number.isFinite(PREVIEW_NOW)) throw new Error("PREVIEW_NOW の日時が正しくありません: " + process.env.PREVIEW_NOW);
+if (PREVIEW_NOW != null) {
+  const RealDate = Date;
+  const started = RealDate.now();
+  const now = () => PREVIEW_NOW + (RealDate.now() - started);
+  globalThis.Date = class extends RealDate {
+    constructor(...args) { if (args.length) super(...args); else super(now()); }
+    static now() { return now(); }
+  };
+}
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -69,7 +83,7 @@ const contactStore = contacts.createMemoryContactStore(candidates);
 const marketingTable = !process.argv.includes("--no-marketing-table");
 const marketingStore = createMemoryMarketingStore({ ready: marketingTable });
 
-// 実CSVの確認（--real-csv <フォルダ>）。Indeedのレポート（EngagementSummary_*.csv）と旧管理CSV（求人マーケティング*.csv）だけを読み取り、
+// 実CSVの確認（--real-csv <フォルダ>）。Indeedのレポート（EngagementSummary_*.csv・JobsCampaigns_*.csv）と旧管理CSV（求人マーケティング*.csv）だけを読み取り、
 // メモリ上に「確認待ち」として保持する。職種・年・「応募」の意味などは画面で利用者が確定し、取込後もメモリ内のみ（DB・Gitには入らない）。
 // このモードでは架空の求人分析データは登録しない（実データと混ざらないようにする）。
 const realCsvAt = process.argv.indexOf("--real-csv");
@@ -77,12 +91,31 @@ const realCsvDir = realCsvAt > 0 && process.argv[realCsvAt + 1] ? path.resolve(p
 const pendingFiles = [];
 if (realCsvAt > 0 && !realCsvDir) throw new Error("--real-csv にはCSVのフォルダを指定してください");
 if (realCsvDir) {
-  for (const name of fs.readdirSync(realCsvDir).filter(n => /^(EngagementSummary_[\w-]*|求人マーケティング.*)\.csv$/i.test(n)).sort()) {
+  for (const name of fs.readdirSync(realCsvDir).filter(n => /^(EngagementSummary_[\w-]*|JobsCampaigns_.*|求人マーケティング.*)\.csv$/i.test(n)).sort()) {
     const bytes = fs.readFileSync(path.join(realCsvDir, name));
     if (bytes.length > 2 * 1024 * 1024) continue;
     pendingFiles.push({ name, size: bytes.length, hash: crypto.createHash("sha256").update(bytes).digest("hex"), base64: bytes.toString("base64") });
   }
 }
+// 既存実績のスナップショット（--seed-json <JSON>）。[{ category, period_start, period_end, plan_type, impressions, clicks, apply_starts, applies, cost, source, source_meta }]
+// 本番と同じ jobMarketingService で登録する（期間が重なる記録は理由付きで重ねて登録）。メモリ内のみ。
+const seedJsonAt = process.argv.indexOf("--seed-json");
+const seedJson = seedJsonAt > 0 && process.argv[seedJsonAt + 1] ? path.resolve(process.argv[seedJsonAt + 1]) : null;
+if (seedJsonAt > 0 && !seedJson) throw new Error("--seed-json にはJSONファイルを指定してください");
+async function seedSnapshot(file) {
+  const rows = JSON.parse(fs.readFileSync(file, "utf8"));
+  const { categories } = await marketing.overview(marketingStore);
+  for (const row of rows) {
+    const category = categories.find(c => c.name === row.category);
+    if (!category) throw new Error("スナップショットの職種が見つかりません: " + row.category);
+    const { category: _name, ...values } = row;
+    const body = { record: { media: "Indeed", ...values, category_id: category.id } };
+    const check = await marketing.saveRecord(marketingStore, { ...body, dry_run: true }, "preview-snapshot@web");
+    const overlap = check.problems.some(p => p.code === "overlap");
+    await marketing.saveRecord(marketingStore, overlap ? { ...body, allow_overlap: true, overlap_reason: "旧管理CSVの集計期間が重なっているため（合算しない）" } : body, "preview-snapshot@web");
+  }
+}
+
 async function pendingList() {
   const view = await marketing.overview(marketingStore);
   const activeImports = new Set(view.records.filter(r => r.state === "active" && r.import_id).map(r => r.import_id));
@@ -213,6 +246,8 @@ async function api(req, res, pathname) {
     return signedIn(req) ? send(res, 200, { user: { username: "preview" } }) : send(res, 401, { error: "Authentication required" });
   if (pathname === "/api/auth/logout" && method === "POST")
     return send(res, 200, { ok: true }, { "Set-Cookie": `${cookieName}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0` });
+  // 検証スクリプト用：固定した基準日（未指定なら pinned: false）。ブラウザ側の時刻も同じ日時に固定するために使う（時刻だけでデータは返さない）
+  if (pathname === "/api/preview/clock" && method === "GET") return send(res, 200, { pinned: PREVIEW_NOW != null, now: PREVIEW_NOW == null ? null : new Date().toISOString() });
   if (!signedIn(req)) return send(res, 401, { error: "Authentication required" });
 
   // 本番と同じ求人分析API（jobMarketingService）をメモリ保存先で実行する
@@ -339,7 +374,8 @@ const contentTypes = {
   ".svg": "image/svg+xml", ".json": "application/json; charset=utf-8", ".png": "image/png", ".ico": "image/x-icon",
 };
 
-(historyTable ? seedHistory() : Promise.resolve()).then(() => marketingTable && !realCsvDir ? seedMarketing() : null).then(() => http.createServer(async (req, res) => {
+(historyTable ? seedHistory() : Promise.resolve()).then(() => marketingTable && !realCsvDir && !seedJson ? seedMarketing() : null)
+  .then(() => marketingTable && seedJson ? seedSnapshot(seedJson) : null).then(() => http.createServer(async (req, res) => {
   try {
     const pathname = new URL(req.url, `http://${host}:${port}`).pathname;
     if (pathname.startsWith("/api/")) return await api(req, res, pathname);
@@ -354,6 +390,7 @@ const contentTypes = {
 }).listen(port, host, () => {
   console.log("=== NKS採用管理：DB接続なしのローカルプレビュー ===");
   console.log(`URL: http://${host}:${port}/`);
+  if (PREVIEW_NOW != null) console.log(`基準日を固定: ${process.env.PREVIEW_NOW}（検証用）`);
   console.log("ログイン名: preview / パスワード: preview-only");
   console.log(historyTable ? "モード: 選考履歴テーブルあり（第2弾の新しい選考更新）" : "モード: 選考履歴テーブルなし（DB適用前の従来動作）");
   if (realCsvDir) console.log(`求人分析: 実CSV ${pendingFiles.length}件を確認待ちとして読み込み（未登録・メモリ内のみ）：${pendingFiles.map(p => p.name).join("、")}`);

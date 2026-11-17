@@ -8,8 +8,10 @@ const now = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo", dat
 
 function createMemoryMarketingStore({ ready = true, categories = DEFAULT_CATEGORIES } = {}) {
   const db = { categories: [], categoryEvents: [], postings: [], planEvents: [], records: [], imports: [], references: [] };
-  let nextId = 1;
-  categories.forEach((name, i) => db.categories.push({ id: String(nextId++), name, is_active: true, sort_order: (i + 1) * 10, created_at: now(), updated_at: now() }));
+  // IDは表ごとの連番（PostgreSQL版の IDENTITY と同じ。プレビューで本番と同じ記録番号を再現できる）
+  let seq = {};
+  const nextId = table => String(seq[table] = (seq[table] || 0) + 1);
+  categories.forEach((name, i) => db.categories.push({ id: nextId("categories"), name, is_active: true, sort_order: (i + 1) * 10, created_at: now(), updated_at: now() }));
   let lock = Promise.resolve();
 
   const tx = {
@@ -17,7 +19,7 @@ function createMemoryMarketingStore({ ready = true, categories = DEFAULT_CATEGOR
     async listCategories() { return clone(db.categories).sort((a, b) => a.sort_order - b.sort_order || Number(a.id) - Number(b.id)); },
     async listCategoryEvents() { return clone(db.categoryEvents); },
     async insertCategory({ name, sort_order }) {
-      const row = { id: String(nextId++), name, is_active: true, sort_order, created_at: now(), updated_at: now() };
+      const row = { id: nextId("categories"), name, is_active: true, sort_order, created_at: now(), updated_at: now() };
       db.categories.push(row);
       return clone(row);
     },
@@ -26,18 +28,18 @@ function createMemoryMarketingStore({ ready = true, categories = DEFAULT_CATEGOR
       Object.assign(row, clone(changes), { updated_at: now() });
       return clone(row);
     },
-    async insertCategoryEvent(event) { db.categoryEvents.push({ ...clone(event), id: String(nextId++), category_id: String(event.category_id), created_at: now() }); },
+    async insertCategoryEvent(event) { db.categoryEvents.push({ ...clone(event), id: nextId("categoryEvents"), category_id: String(event.category_id), created_at: now() }); },
     async listPostings() { return clone(db.postings); },
     async insertPosting(row) {
       if (db.postings.some(p => p.media === row.media && p.external_key === row.external_key)) throw new Error("duplicate posting"); // PostgreSQL版の一意索引と同じ
-      const posting = { id: String(nextId++), category_id: String(row.category_id), media: row.media, external_key: row.external_key, job_id: row.job_id ?? null, title: row.title ?? null, actor: row.actor ?? null, created_at: now() };
+      const posting = { id: nextId("postings"), category_id: String(row.category_id), media: row.media, external_key: row.external_key, job_id: row.job_id ?? null, title: row.title ?? null, actor: row.actor ?? null, created_at: now() };
       db.postings.push(posting);
       return clone(posting);
     },
     async listPlanEvents() { return clone(db.planEvents); },
     async insertPlanEvent(row) {
       if (row.supersedes_id != null && db.planEvents.some(e => String(e.supersedes_id) === String(row.supersedes_id))) throw new Error("duplicate supersedes_id");
-      const id = String(nextId++);
+      const id = nextId("planEvents");
       db.planEvents.push({
         id, kind: row.kind, category_id: String(row.category_id), posting_id: row.posting_id == null ? null : String(row.posting_id),
         supersedes_id: row.supersedes_id == null ? null : String(row.supersedes_id), status: row.status ?? null, effective_date: row.effective_date ?? null,
@@ -49,7 +51,7 @@ function createMemoryMarketingStore({ ready = true, categories = DEFAULT_CATEGOR
     async insertRecord(row) {
       if (row.supersedes_id != null && db.records.some(r => String(r.supersedes_id) === String(row.supersedes_id)))
         throw new Error("duplicate supersedes_id"); // PostgreSQL版の一意索引と同じ
-      const id = String(nextId++);
+      const id = nextId("records");
       db.records.push({
         id, kind: row.kind, category_id: String(row.category_id), supersedes_id: row.supersedes_id == null ? null : String(row.supersedes_id),
         media: row.media ?? null, period_start: row.period_start ?? null, period_end: row.period_end ?? null, plan_type: row.plan_type ?? null,
@@ -61,13 +63,13 @@ function createMemoryMarketingStore({ ready = true, categories = DEFAULT_CATEGOR
     },
     async listImports() { return clone(db.imports); },
     async insertImport(row) {
-      const id = String(nextId++);
+      const id = nextId("imports");
       db.imports.push({ ...clone(row), id, created_at: now() });
       return id;
     },
     async listReferences() { return clone(db.references); },
     async insertReference(row) {
-      const ref = { id: String(nextId++), category_id: String(row.category_id), company_name: row.company_name, job_title: row.job_title ?? null, url: row.url ?? null, memo: row.memo ?? null, checked_on: row.checked_on ?? null, is_deleted: false, actor: row.actor ?? null, created_at: now(), updated_at: now() };
+      const ref = { id: nextId("references"), category_id: String(row.category_id), company_name: row.company_name, job_title: row.job_title ?? null, url: row.url ?? null, memo: row.memo ?? null, checked_on: row.checked_on ?? null, is_deleted: false, actor: row.actor ?? null, created_at: now(), updated_at: now() };
       db.references.push(ref);
       return clone(ref);
     },
@@ -84,12 +86,12 @@ function createMemoryMarketingStore({ ready = true, categories = DEFAULT_CATEGOR
     transaction(work) {
       const run = lock.then(async () => {
         const snapshot = clone(db);
-        const savedId = nextId;
+        const savedSeq = { ...seq };
         try {
           return await work(tx);
         } catch (err) {
           for (const key of Object.keys(db)) db[key] = snapshot[key];
-          nextId = savedId;
+          seq = savedSeq;
           throw err;
         }
       });

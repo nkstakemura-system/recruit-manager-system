@@ -4,9 +4,9 @@
 // ローカルプレビューの実CSVモード（overview に preview_pending_files がある場合）だけ、確認待ちのCSVを取得・表示する。本番では取得しない。
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  DEFAULT_MEDIA, METRICS, METRIC_LABELS, PLAN_STATUS, RATE_LABELS, THRESHOLDS, analyze, comparability, fmtCount, fmtRate, fmtYen,
-  monthAggregate, monthDeltas, monthLabel, monthRange, monthlySeries, periodLabel, planResolver, planSplit, rangesLabel, rates, safeUrl,
-  shiftMonth, slashDate, summaryText, todayTokyo, unitCost,
+  DEFAULT_MEDIA, JOBS_REPORT, METRICS, METRIC_LABELS, PLAN_STATUS, RATE_LABELS, THRESHOLDS, analyze, comparability, fmtCount, fmtRate, fmtYen,
+  isFullMonth, monthAggregate, monthDeltas, monthLabel, monthRange, monthlySeries, periodLabel, planResolver, planSplit, rangesLabel, rates, safeUrl,
+  shiftMonth, slashDate, sumDaily, summaryText, todayTokyo, unitCost,
 } from "../../../shared/jobMarketing.mjs";
 import { marketingApi, errorText, planLabel, postingLabel, sourceLabel, statusLabel } from "./marketingApi";
 import CsvImport from "./CsvImport";
@@ -15,7 +15,76 @@ import { CategoryManager, PlanDialog, PlanVoidDialog, RecordForm, ReferenceForm,
 import "./marketing.css";
 
 const STATUS_SHORT = { free: "無料", paid: "有料", unknown: "不明", stopped: "停止" };
-const KPI_LABELS = { impressions: "表示回数", clicks: "クリック数", apply_starts: "応募開始数", applies: "応募数" };
+const KPI_LABELS = { impressions: "表示回数", clicks: "クリック数", apply_starts: "応募開始数", applies: "応募完了数" };
+
+// 月の集計に使った記録が、1日〜末日の月間合計だけか（日別データは全日分そろっていれば月間合計扱い）
+function monthKind(agg, active) {
+  if (agg.status !== "ok") return null;
+  const range = monthRange(agg.month);
+  const used = agg.record_ids.map(id => active.find(r => String(r.id) === id)).filter(Boolean);
+  const full = used.every(r => (Array.isArray(r.daily) && r.daily.length) ? true : isFullMonth(r.period_start, r.period_end) && r.period_start === range.start);
+  return full && agg.missing_dates.length === 0 && !agg.in_progress ? "full" : "partial";
+}
+
+// 求人原稿の表示名（JobsCampaigns は取込時の求人名・参照番号、日別CSVは求人原稿の登録内容）
+function postingName(r, postings) {
+  const meta = r.source_meta || {};
+  if (meta.report === JOBS_REPORT) return `${meta.job_title || "求人名なし"}${meta.reference ? `（参照番号 ${meta.reference}）` : ""}`;
+  const posting = r.posting_id ? postings.find(p => p.id === r.posting_id) : null;
+  return posting ? postingLabel(posting) : "職種全体（求人原稿の指定なし）";
+}
+
+// 選択月の求人原稿ごとの内訳（折り畳み）。月間合計と月途中の実績、月をまたいで集計に含めていない記録を区別する
+function PostingBreakdown({ agg, active, postings }) {
+  const range = monthRange(agg.month);
+  const used = agg.record_ids.map(id => active.find(r => String(r.id) === id)).filter(Boolean);
+  const spanning = agg.spanning.map(id => active.find(r => String(r.id) === id)).filter(Boolean);
+  if (!used.length && !spanning.length) return null;
+  return (
+    <details className="jm-card jm-fold-card jm-postings">
+      <summary>求人原稿ごとの内訳<span className="jm-count">{used.length}</span></summary>
+      <ul className="jm-posting-list">
+        {used.map(r => {
+          const meta = r.source_meta || {};
+          // 日別データは選択月の行だけを集計する（月をまたぐ日別CSVでも、月次の集計と同じ範囲を表示する）
+          const rows = Array.isArray(r.daily) && r.daily.length ? r.daily.filter(d => d.date >= range.start && d.date <= range.end) : null;
+          const v = rows ? { ...Object.fromEntries(METRICS.map(k => [k, sumDaily(rows, k)])), cost: rows.every(d => d.cost == null) ? null : sumDaily(rows, "cost") } : r;
+          const rt = rates(v);
+          const url = safeUrl(meta.job_url);
+          const full = rows ? null : isFullMonth(r.period_start, r.period_end) && r.period_start === range.start;
+          return (
+            <li key={r.id}>
+              <div className="jm-posting-head">
+                <strong>{postingName(r, postings)}</strong>
+                {full === true && <span className="jm-chip is-ok">月間合計</span>}
+                {full === false && <span className="jm-chip is-warn">月途中の実績 {periodLabel(r.period_start, r.period_end)}</span>}
+                {full === null && <span className="jm-chip">日別 {rows.length}日分</span>}
+                <span className="jm-chip">{planLabel(r.plan_type)}</span>
+                {meta.csv_status && <span className="jm-chip">CSVの状態：{meta.csv_status}</span>}
+              </div>
+              <div className="jm-totals">
+                {METRICS.map(k => <span key={k}>{METRIC_LABELS[k]} <b>{fmtCount(v[k])}</b></span>)}
+                <span>クリック率（CTR） <b>{fmtRate(rt.ctr, 2)}</b></span><span>応募開始率 <b>{fmtRate(rt.asr, 2)}</b></span>
+                <span>費用 <b>{v.cost == null ? "未取得" : fmtYen(v.cost)}</b></span>
+              </div>
+              <p className="jm-meta">
+                #{r.id}・{sourceLabel(r.source)}{meta.report === JOBS_REPORT ? "（求人別・期間合計）" : ""}
+                {meta.report === JOBS_REPORT && `・掲載開始日 ${meta.posting_start?.confirmed ? slashDate(meta.posting_start.date) : "未確認"}`}
+                {url && <> ・<a href={url} target="_blank" rel="noopener noreferrer nofollow" referrerPolicy="no-referrer">求人ページ</a></>}
+              </p>
+            </li>
+          );
+        })}
+      </ul>
+      {spanning.length > 0 && (
+        <div className="jm-posting-spanning">
+          <p className="jm-sub"><b>月をまたぐ記録（この月の集計には含めていません）</b></p>
+          <ul>{spanning.map(r => <li key={r.id} className="jm-sub">#{r.id} {periodLabel(r.period_start, r.period_end)}・{postingName(r, postings)}・表示 {fmtCount(r.impressions)}／クリック {fmtCount(r.clicks)}</li>)}</ul>
+        </div>
+      )}
+    </details>
+  );
+}
 
 // 集計状況の短い表示（全日分／N日分／重複／未登録）
 function coverage(agg) {
@@ -51,10 +120,10 @@ function PlanCard({ g, title, plan, budget }) {
   const rows = [
     ["表示回数", fmtCount(g.totals.impressions), `1日 ${per(g.per_day.impressions)}`],
     ["クリック数", fmtCount(g.totals.clicks), `1日 ${per(g.per_day.clicks)}`],
-    ["クリック率（CTR）", fmtRate(g.rates.ctr), ""],
+    ["クリック率（CTR）", fmtRate(g.rates.ctr, 2), ""],
     ["応募開始数", fmtCount(g.totals.apply_starts), ""],
     ["応募完了数", fmtCount(g.totals.applies), ""],
-    ["応募率", fmtRate(g.rates.apply_rate), ""],
+    ["応募率", fmtRate(g.rates.apply_rate, 2), ""],
     ["掲載費用", g.totals.cost == null ? "未入力" : fmtYen(g.totals.cost), budget != null ? `予算 ${fmtYen(budget)}` : ""],
     ["応募単価", fmtYen(g.unit_cost), ""],
   ];
@@ -68,6 +137,7 @@ function PlanCard({ g, title, plan, budget }) {
       <dl className="jm-vs-rows">
         {rows.map(([k, v, sub]) => <React.Fragment key={k}><dt>{k}</dt><dd>{v}{sub && <>{" "}<small>{sub}</small></>}</dd></React.Fragment>)}
       </dl>
+      {g.unconfirmed_start > 0 && <p className="jm-sub">掲載開始日が未確認の求人（{g.unconfirmed_start}件）は、集計期間の日数で1日平均を計算しています。</p>}
     </div>
   );
 }
@@ -138,7 +208,8 @@ function RecordRow({ r, postings, onEdit, onVoid }) {
         <strong>{periodLabel(r.period_start, r.period_end)}</strong>
         <span className="jm-chip">{sourceLabel(r.source)}</span>
         <span className="jm-chip">{planLabel(r.plan_type)}</span>
-        {posting && <span className="jm-chip">{postingLabel(posting)}</span>}
+        {meta.report === JOBS_REPORT ? <><span className="jm-chip">{postingName(r, postings)}</span><span className="jm-chip">求人別・期間合計</span></>
+          : posting && <span className="jm-chip">{postingLabel(posting)}</span>}
         {r.media !== DEFAULT_MEDIA && <span className="jm-chip">{r.media}</span>}
         {r.state === "superseded" && <span className="jm-chip is-muted">置換済み</span>}
         {r.state === "voided" && <span className="jm-chip is-muted">取消済み：{r.void_reason}</span>}
@@ -152,7 +223,7 @@ function RecordRow({ r, postings, onEdit, onVoid }) {
       </div>
       <div className="jm-totals">
         {METRICS.map(k => <span key={k}>{METRIC_LABELS[k]} <b>{fmtCount(r[k])}</b></span>)}
-        <span>クリック率（CTR） <b>{fmtRate(rt.ctr)}</b></span><span>費用 <b>{r.cost == null ? "未入力" : fmtYen(r.cost)}</b></span>
+        <span>クリック率（CTR） <b>{fmtRate(rt.ctr, 2)}</b></span><span>費用 <b>{r.cost == null ? "未入力" : fmtYen(r.cost)}</b></span>
         {r.daily && <span>日別 <b>{r.daily.length}</b>日分</span>}
       </div>
       {r.note && <p className="jm-note">{r.note}</p>}
@@ -301,6 +372,8 @@ export default function JobMarketing() {
             <button type="button" className="jm-btn is-small" onClick={() => setDialog({ type: "plan" })}>{currentPlan?.status === "free" ? "有料掲載に切替" : "掲載状態を変更"}</button>
             <span className="jm-plan-sep" />
             <Coverage agg={cur} />
+            {monthKind(cur, active) === "full" && <span className="jm-chip is-ok">月間合計<Tip text="1日〜末日の月間合計（または全日分の日別実績）で集計しています" /></span>}
+            {monthKind(cur, active) === "partial" && <span className="jm-chip is-warn">月途中の実績を含む<Tip text="月の一部の期間だけの記録を含みます。月間合計とは比較しにくいため、月末締めのCSVで置き換えると比較できます" /></span>}
             {cur.plan === "mixed" && <span className="jm-chip">月の途中で掲載方法を変更</span>}
           </div>
 
@@ -329,7 +402,7 @@ export default function JobMarketing() {
                 {[["ctr", "クリック数 ÷ 表示回数"], ["asr", "応募開始数 ÷ クリック数"], ["completion", "応募完了数 ÷ 応募開始数"], ["apply_rate", "応募完了数 ÷ クリック数"]].map(([k, formula]) => (
                   <div key={k} className="jm-rate">
                     <span className="jm-rate-label">{RATE_LABELS[k].replace("（ASR）", "")}<Tip text={formula} /></span>
-                    <b>{fmtRate(cur.rates[k])}</b>
+                    <b>{fmtRate(cur.rates[k], 2)}</b>
                     {deltas && <Delta d={deltas[k]} unit="pt" />}
                   </div>
                 ))}
@@ -341,6 +414,7 @@ export default function JobMarketing() {
               </div>
             </>
           )}
+          {cur.status !== "empty" && <PostingBreakdown agg={cur} active={active} postings={postings} />}
 
           <section className="jm-card">
             <h3>無料／有料掲載の比較<span className="jm-h3-sub">直近12か月</span></h3>
@@ -368,7 +442,7 @@ export default function JobMarketing() {
                       <thead><tr><th>月</th>{METRICS.map(k => <th key={k}>{KPI_LABELS[k]}</th>)}<th>クリック率（CTR）</th><th>応募開始率</th><th>費用</th><th>掲載</th><th>集計</th></tr></thead>
                       <tbody>{view.series.slice().reverse().map(m => (
                         <tr key={m.month}><td>{monthLabel(m.month)}</td>{METRICS.map(k => <td key={k}>{m.status === "empty" ? "未登録" : fmtCount(m.totals[k])}</td>)}
-                          <td>{fmtRate(m.rates.ctr)}</td><td>{fmtRate(m.rates.asr)}</td><td>{fmtYen(m.totals.cost)}</td><td>{planLabel(m.plan)}</td><td><Coverage agg={m} /></td></tr>
+                          <td>{fmtRate(m.rates.ctr, 2)}</td><td>{fmtRate(m.rates.asr, 2)}</td><td>{fmtYen(m.totals.cost)}</td><td>{planLabel(m.plan)}</td><td><Coverage agg={m} /></td></tr>
                       ))}</tbody>
                     </table>
                   </div>
@@ -451,12 +525,12 @@ export default function JobMarketing() {
             <summary>全職種の{monthLabel(selectedMonth)}</summary>
             <div className="jm-table-wrap">
               <table className="jm-table is-summary">
-                <thead><tr><th>職種</th><th>表示</th><th>クリック</th><th>クリック率（CTR）</th><th>応募開始</th><th>応募</th><th>掲載</th><th>集計</th></tr></thead>
+                <thead><tr><th>職種</th><th>表示</th><th>クリック</th><th>クリック率（CTR）</th><th>応募開始</th><th>応募完了</th><th>掲載</th><th>集計</th></tr></thead>
                 <tbody>
                   {summary.map(({ category, agg }) => (
                     <tr key={category.id} className={category.id === selected?.id ? "is-selected" : ""} onClick={() => setCategoryId(category.id)}>
                       <td><button type="button" className="jm-link" onClick={() => setCategoryId(category.id)}>{category.name}</button></td>
-                      <td>{fmtCount(agg.totals.impressions)}</td><td>{fmtCount(agg.totals.clicks)}</td><td>{fmtRate(agg.rates.ctr)}</td>
+                      <td>{fmtCount(agg.totals.impressions)}</td><td>{fmtCount(agg.totals.clicks)}</td><td>{fmtRate(agg.rates.ctr, 2)}</td>
                       <td>{fmtCount(agg.totals.apply_starts)}</td><td>{fmtCount(agg.totals.applies)}</td><td>{planLabel(agg.plan)}</td><td><Coverage agg={agg} /></td>
                     </tr>
                   ))}
@@ -473,7 +547,7 @@ export default function JobMarketing() {
       )}
       {dialog?.type === "void" && <VoidDialog record={dialog.record} onClose={() => setDialog(null)} onSaved={() => done("記録を取消しました（履歴に残っています）")} />}
       {dialog?.type === "csv" && (
-        <CsvImport categories={categories} records={active} postings={postings} planEvents={planEvents} initialFile={dialog.initialFile} onClose={() => setDialog(null)}
+        <CsvImport categories={categories} records={active} postings={postings} planEvents={planEvents} imports={data.imports || []} initialFile={dialog.initialFile} onClose={() => setDialog(null)}
           onDone={res => done(`CSVを取り込みました（実績 ${res.ids.length}件${res.references ? `・参考求人 ${res.references}件` : ""}）`)} />
       )}
       {dialog?.type === "categories" && <CategoryManager categories={categories} onClose={() => setDialog(null)} onSaved={load} />}

@@ -98,6 +98,10 @@ const setByLabel = (label, value) => evaluate(`__setValue(__byLabel(${JSON.strin
 
 try {
   await send("Page.enable"); await send("Runtime.enable");
+  // 基準日の固定（プレビューを PREVIEW_NOW 付きで起動したとき、ブラウザ側の現在時刻も同じ日時にする）
+  const clock = await fetch(app + "/api/preview/clock").then(r => r.ok ? r.json() : { pinned: false }).catch(() => ({ pinned: false }));
+  if (clock.pinned) await send("Page.addScriptToEvaluateOnNewDocument", { source: `(() => { const R = Date; const base = R.parse(${JSON.stringify(clock.now)}); const t0 = R.now();
+    const now = () => base + (R.now() - t0); window.Date = class extends R { constructor(...a) { if (a.length) super(...a); else super(now()); } static now() { return now(); } }; })();` });
   await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
   await go("/", `!!document.querySelector(".nks-auth-card")`, "login form");
   await evaluate(`(() => { const [u, p] = document.querySelectorAll(".nks-auth-card input"); __setValue(u, "preview"); __setValue(p, "preview-only"); document.querySelector(".nks-auth-submit").click(); return true; })()`);

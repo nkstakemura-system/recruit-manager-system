@@ -725,3 +725,451 @@ test("Codex review fixes: CSV corrections keep daily data, voiding the only stop
   assert.equal(jm.isDate("1000-01-01"), true);
   await rejectsWith(service.savePlanEvent(store, { category_id: other, status: "free", effective_date: "0999-01-01" }, actor), 400);
 });
+
+// ---------- Indeed JobsCampaigns（求人別・期間合計） ----------
+// フィクスチャーは架空（実在の企業・求人・メールアドレスではない）。原本の列名は未照合のため、表記揺れの候補も検証する。
+const JOBS = "JobsCampaigns_20261001_20261031_fictional.csv";
+const jobsParsed = () => jm.parseIndeedJobs(rowsOf(JOBS), JOBS);
+const csvText = rows => "﻿" + rows.map(r => r.map(v => /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v).join(",")).join("\r\n");
+const jobsHeader = ["求人名", "参照番号", "企業名", "勤務地", "ステータス", "作成日", "最終更新日", "求人URL", "表示回数", "クリック数", "クリック率", "応募開始数", "応募数", "費用", "担当者メールアドレス"];
+const jobsRow = (over = {}) => {
+  const v = { 求人名: "架空求人", 参照番号: "R-1", 企業名: "架空株式会社", 勤務地: "架空市", ステータス: "掲載中", 作成日: "2026/10/20", 最終更新日: "2026/10/25", 求人URL: "https://example.invalid/r1",
+    表示回数: "100", クリック数: "10", クリック率: "0.1", 応募開始数: "0", 応募数: "0", 費用: "", 担当者メールアドレス: "someone@example.invalid", ...over };
+  return jobsHeader.map(h => v[h]);
+};
+const parseJobsText = (rows, name = "JobsCampaigns_20261001_20261031.csv") => jm.parseIndeedJobs(jm.parseCsv(jm.decodeCsv(new TextEncoder().encode(csvText(rows))).text), name);
+const jobsEntry = (categoryId, posting, extra = {}, entryExtra = {}) => ({
+  ...jm.jobsPostingRecord(posting, { categoryId, periodStart: "2026-10-01", periodEnd: "2026-10-31", planType: "free", periodConfirmed: true, filePeriod: { start: "2026-10-01", end: "2026-10-31" }, ...extra }),
+  ...entryExtra,
+});
+
+test("JobsCampaigns: detected by 参照番号 + 表示回数 + クリック数 without a date column; other formats are unchanged", () => {
+  assert.equal(jm.detectFormat(rowsOf(JOBS)), "indeed_jobs");
+  assert.equal(jm.detectFormat(rowsOf(INDEED)), "indeed");
+  assert.equal(jm.detectFormat(rowsOf(LEGACY)), "legacy");
+  // 日付の列がある日別CSVは、参照番号の列があっても従来の Indeed（日別）形式
+  assert.equal(jm.detectFormat([["日付", "参照番号", "表示回数", "クリック数"], ["2026-10-01", "R", "1", "0"]]), "indeed");
+  // 英語の列名
+  assert.equal(jm.detectFormat([["Job title", "Reference number", "Impressions", "Clicks"], ["x", "R", "1", "0"]]), "indeed_jobs");
+  assert.equal(jm.detectFormat([["求人名", "表示回数", "クリック数"], ["x", "1", "0"]]), null);
+});
+
+test("JobsCampaigns: one row is one posting's period total; BOM, quoted commas, starts vs completed, cost 0 vs blank", () => {
+  const p = jobsParsed();
+  assert.deepEqual(p.errors, []);
+  assert.deepEqual(p.file_period, { start: "2026-10-01", end: "2026-10-31" });
+  assert.equal(p.postings.length, 1);
+  const pj = p.postings[0];
+  assert.deepEqual(pj.totals, { impressions: 52, clicks: 6, apply_starts: 1, applies: 1, cost: 0 });
+  assert.equal(pj.reference, "FIC-0001");
+  assert.equal(pj.title, "法人営業スタッフ（架空）");
+  assert.equal(pj.location, "東京都架空区1-2-3, 架空ビル5F", "quoted comma stays inside the cell");
+  assert.equal(pj.csv_status, "募集終了");
+  // 作成日・最終更新日は原稿の情報（集計期間ではない）
+  assert.deepEqual([pj.created_on, pj.updated_on], ["2026-10-03", "2026-10-28"]);
+  // 率は件数から計算（0.115385 → 11.54%）。CSVの率は照合用に保持
+  assert.equal(jm.fmtRate(pj.rates.ctr, 2), "11.54%");
+  assert.equal(pj.csv_rates.ctr.raw, "0.115385");
+  assert.ok(Math.abs(pj.csv_rates.ctr.percent - 11.5385) < 1e-9);
+  assert.equal(jm.fmtRate(pj.rates.completion, 2), "100.00%");
+  assert.deepEqual(pj.notes, [], "CSV rates agree with counts");
+  // 連絡先の列は値を持たない（保存も表示もしない）
+  assert.deepEqual(p.columns.sensitive, ["担当者メールアドレス"]);
+  assert.ok(!JSON.stringify(p).includes("example.invalid/") || !JSON.stringify(p).includes("taro.kakuu"), "email value is not kept");
+  assert.equal(JSON.stringify(p).includes("taro.kakuu@example.invalid"), false);
+  assert.ok(p.warnings.some(w => w.includes("担当者メールアドレス")));
+});
+
+test("JobsCampaigns: zero denominators, blank cost, mismatched CSV rates, duplicates and total rows", () => {
+  const p = parseJobsText([jobsHeader,
+    jobsRow({ 参照番号: "A", 応募開始数: "0", 応募数: "0", 費用: "" }),
+    jobsRow({ 参照番号: "B", クリック率: "25%", 費用: "0" }),
+    jobsRow({ 参照番号: "C" }), jobsRow({ 参照番号: "C" }),
+    jobsRow({ 参照番号: "", 求人名: "合計" }),
+    jobsRow({ 参照番号: "D", 表示回数: "1.5" }),
+  ]);
+  const by = ref => p.postings.find(x => x.reference === ref);
+  // 応募開始0：応募完了率は「—」。費用空欄は未取得（0円ではない）・単価は計算しない
+  assert.equal(by("A").rates.completion, null);
+  assert.equal(by("A").totals.cost, null);
+  assert.equal(jm.unitCost(by("A").totals.cost, by("A").totals.applies), null);
+  assert.ok(by("A").notes.some(n => n.includes("0円とはみなしません")));
+  // 費用0は0円。応募0なら単価は計算しない（ゼロ除算しない）
+  assert.equal(by("B").totals.cost, 0);
+  assert.equal(jm.unitCost(0, 0), null);
+  // CSVの率（25%）と件数からの計算（10%）が違えば注意。表示は件数からの計算
+  assert.ok(by("B").notes.some(n => n.includes("異なります")));
+  assert.equal(jm.fmtRate(by("B").rates.ctr, 2), "10.00%");
+  // 同じ参照番号の行は合算せず、どちらも取り込めない
+  assert.deepEqual(p.postings.filter(x => x.reference === "C").map(x => x.blocked), [true, true]);
+  // 合計行は取り込まない
+  assert.ok(p.warnings.some(w => w.includes("合計行")));
+  assert.equal(p.postings.some(x => x.title === "合計"), false);
+  // 整数でない件数は取り込めない
+  assert.equal(by("D").blocked, true);
+  // ファイル名に期間が無い場合は入力を求める（作成日から推測しない）
+  const noPeriod = parseJobsText([jobsHeader, jobsRow()], "jobs.csv");
+  assert.equal(noPeriod.file_period, null);
+  assert.ok(noPeriod.warnings.some(w => w.includes("集計期間を入力")));
+  assert.equal(jm.parseCsvRate("0.115385"), 11.5385);
+  assert.equal(jm.parseCsvRate("11.54%"), 11.54);
+  assert.equal(jm.parseCsvRate("abc"), null);
+  assert.equal(jm.isFullMonth("2026-10-01", "2026-10-31"), true);
+  assert.equal(jm.isFullMonth("2026-10-15", "2026-10-31"), false);
+  assert.equal(jm.isFullMonth("2026-02-01", "2026-02-28"), true);
+});
+
+test("JobsCampaigns: only whitelisted source_meta is stored (no email, no company); invalid URLs are dropped", () => {
+  const meta = jm.sanitizeJobsMeta({ reference: "R", job_title: "T", job_url: "javascript:alert(1)", company: "架空株式会社", email: "x@example.invalid",
+    csv_rates: { ctr: { raw: "0.1", percent: 10 }, evil: { raw: "x" } }, posting_start: { date: "2026-10-15" }, period_confirmed: true, extra: { a: 1 } });
+  assert.equal(meta.report, "jobs_campaigns");
+  assert.equal(meta.job_url, null);
+  assert.equal("company" in meta || "email" in meta || "extra" in meta, false);
+  assert.deepEqual(Object.keys(meta.csv_rates), ["ctr"]);
+  assert.deepEqual(meta.posting_start, { date: "2026-10-15", confirmed: true });
+  assert.deepEqual(jm.sanitizeJobsMeta({ posting_start: { date: "" } }).posting_start, { date: null, confirmed: false }, "blank posting start stays unconfirmed");
+  const { record, posting } = jsonsafe(jm.jobsPostingRecord(jobsParsed().postings[0], { categoryId: "1", periodStart: "2026-10-01", periodEnd: "2026-10-31", planType: "free", periodConfirmed: true }));
+  assert.equal(record.daily, null);
+  assert.equal(JSON.stringify(record).includes("taro.kakuu"), false);
+  assert.equal(JSON.stringify(record).includes("架空設備株式会社"), false, "company name is display only");
+  assert.deepEqual(posting, { job_id: "FIC-0001", job_title: "法人営業スタッフ（架空）" });
+});
+function jsonsafe(v) { return JSON.parse(JSON.stringify(v)); }
+
+test("JobsCampaigns import: period must be confirmed, reference required, stored as indeed_csv with a posting, month total and history", async () => {
+  const { store, cat } = await setup();
+  const sales = cat("営業");
+  const pj = jobsParsed().postings[0];
+  const file = (entries, extra = {}) => ({ file_name: JOBS, file_hash: "9".repeat(64), format: "indeed_jobs", entries, ...extra });
+  // 集計期間の確認が無い・参照番号が無いものは拒否
+  await rejectsWith(service.importCsv(store, file([jobsEntry(sales, pj, { periodConfirmed: false })]), actor), 400);
+  await rejectsWith(service.importCsv(store, file([{ ...jobsEntry(sales, pj), posting: { job_id: null, job_title: "x" } }]), actor), 400);
+  await rejectsWith(service.importCsv(store, file([jobsEntry(sales, pj, { postingStart: "2026-11-05" })]), actor), 400);
+  // 掲載種別は自動で決めない（費用0円でも必須）
+  await rejectsWith(service.importCsv(store, file([jobsEntry(sales, pj, { planType: "" })]), actor), 400);
+  // 画面の値に連絡先などを混ぜて送っても保存しない
+  const tampered = jobsEntry(sales, pj);
+  tampered.record.source_meta = { ...tampered.record.source_meta, email: "x@example.invalid", company: "架空設備株式会社" };
+  tampered.record.daily = [{ date: "2026-10-01", impressions: 999 }];
+  const res = await service.importCsv(store, file([tampered]), actor);
+  let view = await service.overview(store);
+  const saved = view.records.find(r => r.id === res.ids[0]);
+  assert.deepEqual([saved.impressions, saved.clicks, saved.apply_starts, saved.applies, saved.cost], [52, 6, 1, 1, 0]);
+  assert.equal(saved.daily, null);
+  assert.equal(saved.source, "indeed_csv");
+  assert.equal(saved.source_meta.report, "jobs_campaigns");
+  assert.equal(saved.source_meta.posting_start.confirmed, false, "posting start not entered stays unconfirmed");
+  assert.equal(JSON.stringify(saved.source_meta).includes("example.invalid/job") && !JSON.stringify(saved.source_meta).includes("x@example.invalid"), true);
+  assert.equal(JSON.stringify(saved.source_meta).includes("架空設備"), false);
+  assert.equal(view.imports[0].format, "indeed_csv", "no new DB format value (no migration)");
+  assert.deepEqual(view.postings.map(p => [p.external_key, p.category_id]), [["id:FIC-0001", sales]]);
+  // 10月の月間合計（全日分）。率は件数から計算
+  const oct = jm.monthAggregate(view.records.filter(r => r.state === "active"), { categoryId: sales, month: "2026-10", asOf: "2026-11-17" });
+  assert.equal(oct.status, "ok");
+  assert.equal(oct.missing_dates.length, 0);
+  assert.deepEqual(oct.totals, { impressions: 52, clicks: 6, apply_starts: 1, applies: 1, cost: 0 });
+  assert.equal(jm.fmtRate(oct.rates.ctr, 2), "11.54%");
+  // CSVの「募集終了」で職種の募集状態は変わらない
+  assert.equal(view.categories.find(c => c.id === sales).is_active, true);
+  // 同じファイルは二重登録できない。別ファイルでも同じ原稿・同じ期間は置き換えが必要
+  await rejectsWith(service.importCsv(store, file([jobsEntry(sales, pj)]), actor), 409, "duplicate_file");
+  await rejectsWith(service.importCsv(store, file([jobsEntry(sales, pj)], { file_hash: "8".repeat(64) }), actor), 409, "same_period");
+  // 同じ参照番号を別の職種へは取り込めない
+  const dry = await service.importCsv(store, file([jobsEntry(cat("電気工事士"), pj)], { file_hash: "7".repeat(64), dry_run: true }), actor);
+  assert.equal(dry.problems[0].code, "posting_category");
+  // 修正しても数値・期間・原稿・取込元の情報は引き継ぎ、掲載種別とメモだけ変わる（数値を直すときは取消して再取込）
+  const fixed = await service.saveRecord(store, { supersedes_id: saved.id, record: { ...base(sales), impressions: 1, plan_type: "unknown", note: "メモ" } }, actor);
+  view = await service.overview(store);
+  const next = view.records.find(r => r.id === fixed.id);
+  assert.deepEqual([next.impressions, next.period_start, next.posting_id, next.source_meta.reference, next.import_id, next.plan_type, next.note],
+    [52, "2026-10-01", saved.posting_id, "FIC-0001", saved.import_id, "unknown", "メモ"]);
+  assert.equal(view.records.find(r => r.id === saved.id).state, "superseded");
+});
+
+test("JobsCampaigns import over old partial records: replacement keeps history, spanning records need a reason, 637 vs 16 is flagged", async () => {
+  const { store, cat } = await setup();
+  const tokigawa = cat("CADオペ（ときがわ）");
+  const legacy = (start, end, impressions, clicks) => ({ record: { ...base(tokigawa, { period_start: start, period_end: end, impressions, clicks, apply_starts: 2, applies: null }), source: "legacy_csv" } });
+  await service.saveRecord(store, legacy("2026-09-01", "2026-09-30", 324, 55), actor);
+  const partial = await service.saveRecord(store, legacy("2026-10-01", "2026-10-19", 637, 116), actor);
+  const spanningDry = await service.saveRecord(store, { ...legacy("2026-09-07", "2026-10-07", 126, 16), dry_run: true }, actor);
+  assert.equal(spanningDry.problems[0].code, "overlap");
+  const spanning = await service.saveRecord(store, { ...legacy("2026-09-07", "2026-10-07", 126, 16), allow_overlap: true, overlap_reason: "旧管理CSVの期間" }, actor);
+  let view = await service.overview(store);
+  let active = view.records.filter(r => r.state === "active");
+  const pj = parseJobsText([jobsHeader, jobsRow({ 参照番号: "TOKI-1", 表示回数: "16", クリック数: "6", クリック率: "0.375" })]).postings[0];
+  // 取込前の確認：重なる旧記録の種類と、旧記録の方が大きい（集計対象が違う可能性）ことを示す。自動では置き換えない
+  const related = jm.relatedRecords(active, { categoryId: tokigawa, periodStart: "2026-10-01", periodEnd: "2026-10-31" });
+  assert.deepEqual(related.map(r => [r.id, r.kind]), [[spanning.id, "spanning"], [partial.id, "partial"]]);
+  const octPeriod = { start: "2026-10-01", end: "2026-10-31" };
+  assert.equal(jm.scopeMismatch(active.find(r => r.id === partial.id), pj.totals, octPeriod), true);
+  assert.equal(jm.scopeMismatch(active.find(r => r.id === spanning.id), { impressions: 1, clicks: 1 }, octPeriod), false, "spanning records cover another period and are not compared");
+  const file = (entries, h = "6") => ({ file_name: "JobsCampaigns_20261001_20261031 (2).csv", file_hash: h.repeat(64), format: "indeed_jobs", entries });
+  const dry = await service.importCsv(store, { ...file([jobsEntry(tokigawa, pj)]), dry_run: true }, actor);
+  assert.equal(dry.problems[0].code, "overlap", "nothing is replaced without the user's choice");
+  assert.deepEqual(dry.problems[0].conflicts.map(c => c.id).sort(), [partial.id, spanning.id].sort());
+  // 途中実績を置き換え、跨月の旧記録は理由付きで残す（9月の確定実績はそのまま）
+  const res = await service.importCsv(store, file([jobsEntry(tokigawa, pj, { scopeConfirmed: true }, { replace_ids: [partial.id], allow_overlap: true, overlap_reason: "月をまたぐ旧記録は参考として残す" })]), actor);
+  view = await service.overview(store);
+  const state = id => view.records.find(r => r.id === id).state;
+  assert.deepEqual([state(partial.id), state(spanning.id), state(res.ids[0])], ["superseded", "active", "active"]);
+  const saved = view.records.find(r => r.id === res.ids[0]);
+  assert.equal(saved.source_meta.scope_confirmed, true);
+  assert.deepEqual(saved.source_meta.overlap.with, [spanning.id], "overlap is recorded with real record ids");
+  active = view.records.filter(r => r.state === "active");
+  const oct = jm.monthAggregate(active, { categoryId: tokigawa, month: "2026-10", asOf: "2026-11-17" });
+  assert.deepEqual([oct.status, oct.totals.impressions, oct.spanning], ["ok", 16, [spanning.id]]);
+  const sep = jm.monthAggregate(active, { categoryId: tokigawa, month: "2026-09", asOf: "2026-11-17" });
+  assert.equal(sep.totals.impressions, 324, "September confirmed result is kept");
+  // 置き換えた記録は削除されず、履歴に残る
+  assert.equal(view.records.length, 4);
+});
+
+test("overlap reasons inside one import refer to the real record ids, not placeholders", async () => {
+  const { store, cat } = await setup();
+  const id = cat("CADオペ（本社）");
+  const rows = rowsOf(LEGACY);
+  const parsed = jm.parseLegacy(rows, LEGACY);
+  const entries = parsed.columns.map(c => ({ record: jm.legacyColumnRecord(c, { categoryId: id, year: 2026, applyMapping: "apply_starts", planType: "free" }) }));
+  const dry = await service.importCsv(store, { file_name: LEGACY, file_hash: "5".repeat(64), format: "legacy", entries, dry_run: true }, actor);
+  const overlapping = dry.problems.filter(p => p.code === "overlap").map(p => p.index);
+  if (!overlapping.length) return; // フィクスチャーに重なる列が無い場合は対象外
+  for (const e of entries) Object.assign(e, { allow_overlap: true, overlap_reason: "同じファイル内で期間が重なる" });
+  const res = await service.importCsv(store, { file_name: LEGACY, file_hash: "5".repeat(64), format: "legacy", entries }, actor);
+  const view = await service.overview(store);
+  for (const rid of res.ids) {
+    const with_ = view.records.find(r => r.id === rid).source_meta?.overlap?.with || [];
+    assert.equal(with_.some(x => String(x).startsWith("new-")), false);
+    for (const x of with_) assert.ok(view.records.some(r => r.id === x));
+  }
+});
+
+test("Codex review (J-01): the server refuses replacing a larger old record unless the scope is confirmed", async () => {
+  const { store, cat } = await setup();
+  const id = cat("CADオペ（ときがわ）");
+  const old = await service.saveRecord(store, { record: { ...base(id, { period_start: "2026-10-01", period_end: "2026-10-19", impressions: 637, clicks: 116 }), source: "legacy_csv" } }, actor);
+  const pj = parseJobsText([jobsHeader, jobsRow({ 参照番号: "TOKI-1", 表示回数: "16", クリック数: "6" })]).postings[0];
+  const body = scope => ({ file_name: "j.csv", file_hash: "4".repeat(64), format: "indeed_jobs", entries: [jobsEntry(id, pj, { scopeConfirmed: scope }, { replace_ids: [old.id] })] });
+  const dry = await service.importCsv(store, { ...body(false), dry_run: true }, actor);
+  assert.deepEqual(dry.problems.map(p => p.code), ["scope_unconfirmed"]);
+  await rejectsWith(service.importCsv(store, body(false), actor), 409, "scope_unconfirmed");
+  let view = await service.overview(store);
+  assert.equal(view.records.find(r => r.id === old.id).state, "active", "nothing replaced");
+  await service.importCsv(store, body(true), actor);
+  view = await service.overview(store);
+  assert.equal(view.records.find(r => r.id === old.id).state, "superseded");
+});
+
+test("Codex review (J-02/J-03): reference numbers must match the posting; other routes cannot claim JobsCampaigns", async () => {
+  const { store, cat } = await setup();
+  const sales = cat("営業");
+  const pj = jobsParsed().postings[0];
+  const entry = jobsEntry(sales, pj);
+  // 表示用の参照番号と、重複判定に使う求人原稿が食い違う入力は拒否
+  await rejectsWith(service.importCsv(store, { file_name: JOBS, file_hash: "3".repeat(64), format: "indeed_jobs", entries: [{ ...entry, posting: { job_id: "OTHER", job_title: "x" } }] }, actor), 400);
+  // 手入力・他の形式から JobsCampaigns を名乗る記録（連絡先などを含む）は拒否
+  const spoofMeta = { report: "jobs_campaigns", reference: "FIC-0001", email: "x@example.invalid" };
+  await rejectsWith(service.saveRecord(store, { record: { ...base(sales, { period_start: "2026-10-01", period_end: "2026-10-31" }), source_meta: spoofMeta } }, actor), 400);
+  const legacyEntry = { record: { ...base(sales, { period_start: "2026-10-01", period_end: "2026-10-31" }), source: "legacy_csv", source_meta: spoofMeta } };
+  await rejectsWith(service.importCsv(store, { file_name: "l.csv", file_hash: "2".repeat(64), format: "legacy", entries: [legacyEntry] }, actor), 400);
+  const view = await service.overview(store);
+  assert.equal(view.records.length, 0);
+  // 参照番号・求人名の保存値は求人原稿にそろえる
+  const ok = jobsEntry(sales, pj);
+  ok.record.source_meta = { ...ok.record.source_meta, job_title: "画面で書き換えた名前" };
+  const res = await service.importCsv(store, { file_name: JOBS, file_hash: "3".repeat(64), format: "indeed_jobs", entries: [ok] }, actor);
+  const saved = (await service.overview(store)).records.find(r => r.id === res.ids[0]);
+  assert.deepEqual([saved.source_meta.reference, saved.source_meta.job_title], ["FIC-0001", "法人営業スタッフ（架空）"]);
+});
+
+test("Codex review (J-04/J-06): per-day averages count from a confirmed posting start; non-yen costs are refused", async () => {
+  const { store, cat } = await setup();
+  const sales = cat("営業");
+  const pj = jobsParsed().postings[0];
+  await service.importCsv(store, { file_name: JOBS, file_hash: "1".repeat(64), format: "indeed_jobs", entries: [jobsEntry(sales, pj, { postingStart: "2026-10-22" })] }, actor);
+  let view = await service.overview(store);
+  let split = jm.planSplit(view.records.filter(r => r.state === "active"), { categoryId: sales, start: "2026-10-01", end: "2026-10-31" });
+  assert.equal(split.free.unit_days, 10, "10/22〜10/31");
+  assert.equal(split.free.totals.impressions, 52, "totals are not prorated");
+  assert.equal(split.free.unconfirmed_start, 0);
+  const elec = cat("電気工事士");
+  const pe = parseJobsText([jobsHeader, jobsRow({ 参照番号: "E-1" })]).postings[0];
+  await service.importCsv(store, { file_name: "e.csv", file_hash: "0".repeat(64), format: "indeed_jobs", entries: [jobsEntry(elec, pe)] }, actor);
+  view = await service.overview(store);
+  split = jm.planSplit(view.records.filter(r => r.state === "active"), { categoryId: elec, start: "2026-10-01", end: "2026-10-31" });
+  assert.deepEqual([split.free.unit_days, split.free.unconfirmed_start], [31, 1], "unconfirmed start uses the report days and is flagged");
+  // 円以外の費用は取り込まない（円として合算しない）
+  const usd = parseJobsText([[...jobsHeader, "通貨"], [...jobsRow({ 参照番号: "U-1", 費用: "100" }), "USD"]]).postings[0];
+  assert.equal(usd.currency, "USD");
+  await rejectsWith(service.importCsv(store, { file_name: "u.csv", file_hash: "c".repeat(64), format: "indeed_jobs", entries: [jobsEntry(cat("CADオペ（本社）"), usd)] }, actor), 400);
+});
+
+test("Codex review (J2-02): related records are only those that really overlap (category-wide or the same posting)", () => {
+  const rec = (id, posting_id, start, end) => ({ id, category_id: "1", media: "Indeed", posting_id, period_start: start, period_end: end, plan_type: "free", impressions: 100, clicks: 10 });
+  const active = [rec("1", null, "2026-09-07", "2026-10-07"), rec("2", "50", "2026-09-07", "2026-10-07"), rec("3", "60", "2026-10-01", "2026-10-31")];
+  const ids = postingId => jm.relatedRecords(active, { categoryId: "1", periodStart: "2026-10-01", periodEnd: "2026-10-31", postingId }).map(r => r.id);
+  assert.deepEqual(ids(null), ["1"], "a new posting overlaps only category-wide records");
+  assert.deepEqual(ids("60"), ["1", "3"]);
+  // 画面の候補と、無料／有料比較で実際に除外される組み合わせが一致する
+  const split = jm.planSplit([...active, rec("9", "70", "2026-10-01", "2026-10-31")], { categoryId: "1", start: "2026-09-01", end: "2026-10-31" });
+  assert.deepEqual(split.excluded.sort(), ["1", "2", "3", "9"], "the category-wide record #1 clashes with every posting on overlapping days");
+  const without = jm.planSplit([active[1], active[2], rec("9", "70", "2026-10-01", "2026-10-31")], { categoryId: "1", start: "2026-09-01", end: "2026-10-31" });
+  assert.deepEqual(without.excluded, [], "different postings are not excluded");
+});
+
+test("Codex review (J3-01): a JobsCampaigns import never replaces a record that does not overlap it", async () => {
+  const { store, cat } = await setup();
+  const id = cat("CADオペ（本社）");
+  const oct = await service.saveRecord(store, { record: { ...base(id, { period_start: "2026-10-01", period_end: "2026-10-19" }), source: "legacy_csv" } }, actor);
+  const pj = parseJobsText([jobsHeader, jobsRow({ 参照番号: "HQ-1" })]).postings[0];
+  // 10月の旧記録を選んだまま、期間を11月に変えて送った場合
+  const entry = jobsEntry(id, pj, { periodStart: "2026-11-01", periodEnd: "2026-11-30" }, { replace_ids: [oct.id] });
+  const dry = await service.importCsv(store, { file_name: "n.csv", file_hash: "d".repeat(64), format: "indeed_jobs", entries: [entry], dry_run: true }, actor);
+  assert.deepEqual(dry.problems.map(p => p.code), ["replace_unrelated"]);
+  await rejectsWith(service.importCsv(store, { file_name: "n.csv", file_hash: "d".repeat(64), format: "indeed_jobs", entries: [entry] }, actor), 409, "replace_unrelated");
+  const view = await service.overview(store);
+  assert.equal(view.records.find(r => r.id === oct.id).state, "active", "the October record stays active");
+});
+
+// ---------- 上書き（同じ求人・同じ期間）と過去月の登録 ----------
+const monthFile = (h, entries, extra = {}) => ({ file_name: `JobsCampaigns_${h}.csv`, file_hash: require("node:crypto").createHash("sha256").update(String(h)).digest("hex"), format: "indeed_jobs", entries, ...extra });
+const jobsRowFor = (ref, imp, clk, starts = 0, applies = 0) => parseJobsText([jobsHeader, jobsRow({ 参照番号: ref, 求人名: `架空求人${ref}`, 表示回数: String(imp), クリック数: String(clk), 応募開始数: String(starts), 応募数: String(applies), 費用: "0" })]).postings[0];
+const monthEntry = (categoryId, posting, month, extra = {}) => {
+  const range = jm.monthRange(month);
+  return jobsEntry(categoryId, posting, { periodStart: range.start, periodEnd: range.end, filePeriod: { start: range.start, end: range.end }, ...extra });
+};
+const activeOf = async store => (await service.overview(store)).records.filter(r => r.state === "active");
+const monthTotals = async (store, categoryId, month) => jm.monthAggregate(await activeOf(store), { categoryId, month, asOf: "2026-11-17" });
+
+test("overwrite: the same posting and month is replaced (old kept as history); other postings and months are untouched", async () => {
+  const { store, cat } = await setup();
+  const sales = cat("営業");
+  const a1 = await service.importCsv(store, monthFile("a", [monthEntry(sales, jobsRowFor("A", 52, 6, 1, 1), "2026-10")]), actor);
+  await service.importCsv(store, monthFile("b", [monthEntry(sales, jobsRowFor("B", 30, 3), "2026-10")]), actor); // 別の求人（同じ職種・同じ月）
+  await service.importCsv(store, monthFile("c", [monthEntry(sales, jobsRowFor("A", 20, 2), "2026-09")]), actor); // 同じ求人の別の月
+  assert.deepEqual((await monthTotals(store, sales, "2026-10")).totals, { impressions: 82, clicks: 9, apply_starts: 1, applies: 1, cost: 0 }, "different postings are summed");
+  // 同じ求人・同じ月の再ダウンロード：置き換え指定なしでは二重計上を防いで止まる
+  const again = jobsRowFor("A", 60, 7, 1, 1);
+  await rejectsWith(service.importCsv(store, monthFile("d", [monthEntry(sales, again, "2026-10")]), actor), 409, "same_period");
+  // 上書き（同じ求人・同じ期間の記録を置き換え）
+  const res = await service.importCsv(store, monthFile("d", [{ ...monthEntry(sales, again, "2026-10"), replace_ids: [a1.ids[0]] }]), actor);
+  const view = await service.overview(store);
+  assert.equal(view.records.find(r => r.id === a1.ids[0]).state, "superseded", "old record is kept as history");
+  assert.equal(view.records.find(r => r.id === res.ids[0]).supersedes_id, a1.ids[0]);
+  assert.equal((await monthTotals(store, sales, "2026-10")).totals.impressions, 90, "60 (new A) + 30 (B), the old 52 is not counted");
+  assert.equal((await monthTotals(store, sales, "2026-09")).totals.impressions, 20, "another month is unchanged");
+  // 別の求人・別の月の記録を置き換えに指定しても拒否（勝手に置換しない）
+  const b = view.records.find(r => r.state === "active" && r.source_meta?.reference === "B");
+  const sep = view.records.find(r => r.state === "active" && r.period_start === "2026-09-01");
+  for (const target of [b, sep]) {
+    const dry = await service.importCsv(store, { ...monthFile("e", [{ ...monthEntry(sales, jobsRowFor("A", 61, 7), "2026-10"), replace_ids: [res.ids[0], target.id] }]), dry_run: true }, actor);
+    assert.ok(dry.problems.some(p => p.code === "replace_unrelated"), `#${target.id} must not be replaced`);
+  }
+});
+
+test("overwrite of partial old records: several records are replaced at once and only the new month total counts", async () => {
+  const { store, cat } = await setup();
+  const hq = cat("CADオペ（本社）");
+  const legacy = (start, end, impressions, clicks, extra = {}) => service.saveRecord(store, { record: { ...base(hq, { period_start: start, period_end: end, impressions, clicks, apply_starts: 1, applies: null }), source: "legacy_csv" }, ...extra }, actor);
+  const sep = await legacy("2026-09-01", "2026-09-30", 300, 30);
+  const span = await legacy("2026-09-07", "2026-10-07", 126, 16, { allow_overlap: true, overlap_reason: "旧管理CSV" });
+  const part = await legacy("2026-10-01", "2026-10-19", 276, 51, { allow_overlap: true, overlap_reason: "旧管理CSV" });
+  // 新しい原稿の月間合計で、途中実績と跨月の旧記録をまとめて置き換え（跨月の9月部分は日割りしない）
+  const res = await service.importCsv(store, monthFile("h", [{ ...monthEntry(hq, jobsRowFor("HQ", 458, 87, 2, 2), "2026-10"), replace_ids: [part.id, span.id] }]), actor);
+  const view = await service.overview(store);
+  const state = id => view.records.find(r => r.id === id).state;
+  assert.deepEqual([state(part.id), state(span.id), state(sep.id), state(res.ids[0])], ["superseded", "voided", "active", "active"]);
+  assert.equal(view.records.find(r => r.id === span.id).void_reason, `記録#${res.ids[0]}で置き換え`);
+  const oct = await monthTotals(store, hq, "2026-10");
+  assert.deepEqual([oct.status, oct.totals.impressions, oct.missing_dates.length, oct.spanning], ["ok", 458, 0, []]);
+  assert.equal((await monthTotals(store, hq, "2026-09")).totals.impressions, 300, "September confirmed result is kept and not prorated");
+});
+
+test("past months can be registered in any order; mid-month postings keep the report period and unknown start date", async () => {
+  const { store, cat } = await setup();
+  const elec = cat("電気工事士");
+  // 10月 → 8月 → 9月 の順に登録しても、各月の値は同じ
+  await service.importCsv(store, monthFile("1", [monthEntry(elec, jobsRowFor("E", 103, 8), "2026-10")]), actor);
+  await service.importCsv(store, monthFile("2", [monthEntry(elec, jobsRowFor("E", 80, 5), "2026-08")]), actor);
+  await service.importCsv(store, monthFile("3", [monthEntry(elec, jobsRowFor("E", 90, 7), "2026-09", { postingStart: "2026-09-15" })]), actor);
+  const series = jm.monthlySeries(await activeOf(store), { categoryId: elec, endMonth: "2026-10", count: 3, asOf: "2026-11-17" });
+  assert.deepEqual(series.map(m => [m.month, m.totals.impressions, m.status, m.missing_dates.length]), [["2026-08", 80, "ok", 0], ["2026-09", 90, "ok", 0], ["2026-10", 103, "ok", 0]]);
+  // 月途中開始：集計期間は1日〜末日のまま、掲載開始日は別に保持（日割りしない）。未入力は未確認
+  const view = await service.overview(store);
+  const sepRec = view.records.find(r => r.period_start === "2026-09-01");
+  assert.deepEqual([sepRec.period_start, sepRec.period_end, sepRec.impressions, sepRec.source_meta.posting_start], ["2026-09-01", "2026-09-30", 90, { date: "2026-09-15", confirmed: true }]);
+  assert.equal(view.records.find(r => r.period_start === "2026-10-01").source_meta.posting_start.confirmed, false);
+  // 記録の無い月は0件ではなく未登録
+  const jul = jm.monthAggregate(await activeOf(store), { categoryId: elec, month: "2026-07", asOf: "2026-11-17" });
+  assert.deepEqual([jul.status, jul.totals.impressions], ["empty", null]);
+});
+
+test("overwrite of the same posting does not require the scope confirmation even if the new values are smaller", async () => {
+  const { store, cat } = await setup();
+  const sales = cat("営業");
+  const first = await service.importCsv(store, monthFile("x", [monthEntry(sales, jobsRowFor("S", 100, 10), "2026-10")]), actor);
+  const smaller = { ...monthEntry(sales, jobsRowFor("S", 90, 9), "2026-10"), replace_ids: [first.ids[0]] };
+  const dry = await service.importCsv(store, { ...monthFile("y", [smaller]), dry_run: true }, actor);
+  assert.deepEqual(dry.problems, [], "same posting = same scope");
+});
+
+test("a failure in the middle of an overwrite rolls everything back", async () => {
+  const { store, cat } = await setup();
+  const sales = cat("営業");
+  const first = await service.importCsv(store, monthFile("p", [monthEntry(sales, jobsRowFor("P", 50, 5), "2026-10")]), actor);
+  const extra = await service.saveRecord(store, { record: { ...base(sales, { period_start: "2026-10-01", period_end: "2026-10-09" }), source: "legacy_csv" }, allow_overlap: true, overlap_reason: "旧" }, actor);
+  const snapshot = JSON.stringify(store.dump());
+  // 2件を置き換える上書き：1件目（新しい記録＝置換）の追加後、2件目（取消）の追加で失敗させる
+  const original = store.transaction;
+  store.transaction = work => original(tx => {
+    let calls = 0;
+    return work({ ...tx, insertRecord: row => { calls += 1; if (calls === 2) throw new Error("simulated failure"); return tx.insertRecord(row); } });
+  });
+  const entry = { ...monthEntry(sales, jobsRowFor("P", 60, 6), "2026-10", { scopeConfirmed: true }), replace_ids: [first.ids[0], extra.id] };
+  await assert.rejects(service.importCsv(store, monthFile("q", [entry]), actor), /simulated failure/);
+  store.transaction = original;
+  assert.equal(JSON.stringify(store.dump()), snapshot, "records, postings and imports are unchanged after the failure");
+  assert.equal((await monthTotals(store, sales, "2026-10")).status, "overlap", "the old state (two overlapping records) is kept as it was");
+});
+
+test("Codex review (O-02): one old category-wide record is replaced once, even when one CSV has two postings of the category", async () => {
+  const { store, cat } = await setup();
+  const id = cat("CADオペ（本社）");
+  const part = await service.saveRecord(store, { record: { ...base(id, { period_start: "2026-10-01", period_end: "2026-10-19", impressions: 300, clicks: 30 }), source: "legacy_csv" } }, actor);
+  const a = monthEntry(id, jobsRowFor("A", 400, 40), "2026-10");
+  const b = monthEntry(id, jobsRowFor("B", 100, 10), "2026-10");
+  // 両方の求人が同じ旧記録を置き換えようとすると、保存前に止める（一意制約の失敗にしない）
+  const twice = await service.importCsv(store, { ...monthFile("t1", [{ ...a, replace_ids: [part.id] }, { ...b, replace_ids: [part.id] }]), dry_run: true }, actor);
+  assert.ok(twice.problems.some(p => p.code === "replace_twice"));
+  // 先の求人だけが置き換える計画なら、後の求人は重なりの確認なしで登録できる
+  const res = await service.importCsv(store, monthFile("t1", [{ ...a, replace_ids: [part.id] }, b]), actor);
+  assert.equal(res.ids.length, 2);
+  const oct = await monthTotals(store, id, "2026-10");
+  assert.deepEqual([oct.status, oct.totals.impressions], ["ok", 500]);
+  assert.equal((await service.overview(store)).records.find(r => r.id === part.id).state, "superseded");
+});
+
+test("Codex review (O-03): editing a CSV-based record cannot replace other records", async () => {
+  const { store, cat } = await setup();
+  const sales = cat("営業");
+  const res = await service.importCsv(store, monthFile("e1", [monthEntry(sales, jobsRowFor("ED", 50, 5), "2026-10")]), actor);
+  const other = await service.importCsv(store, monthFile("e2", [monthEntry(sales, jobsRowFor("OT", 30, 3), "2026-10")]), actor);
+  await rejectsWith(service.saveRecord(store, { supersedes_id: res.ids[0], replace_ids: [other.ids[0]], record: { ...base(sales), plan_type: "paid", note: "x" } }, actor), 400);
+  assert.equal((await service.overview(store)).records.find(r => r.id === other.ids[0]).state, "active");
+  const ok = await service.saveRecord(store, { supersedes_id: res.ids[0], record: { ...base(sales), plan_type: "paid", note: "メモ" } }, actor);
+  assert.equal(ok.kept_daily, true);
+});
+
+test("Codex review (O-04): postings of the same CSV that are not registered yet can be added later; registered ones are not doubled", async () => {
+  const { store, cat } = await setup();
+  const sales = cat("営業");
+  const elec = cat("電気工事士");
+  const a = monthEntry(sales, jobsRowFor("PA", 52, 6), "2026-10");
+  const b = monthEntry(elec, jobsRowFor("PB", 103, 8), "2026-10");
+  await service.importCsv(store, monthFile("same", [a]), actor); // 同じCSVのうち求人Aだけ先に登録
+  const dupA = await service.importCsv(store, { ...monthFile("same", [a]), dry_run: true }, actor);
+  assert.equal(dupA.problems[0].code, "duplicate_file", "the registered posting of the same CSV is not imported again");
+  const resB = await service.importCsv(store, monthFile("same", [b]), actor); // 残りの求人Bを後から追加
+  assert.equal(resB.ids.length, 1);
+  assert.deepEqual([(await monthTotals(store, sales, "2026-10")).totals.impressions, (await monthTotals(store, elec, "2026-10")).totals.impressions], [52, 103]);
+});

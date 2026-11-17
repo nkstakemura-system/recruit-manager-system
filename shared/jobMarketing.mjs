@@ -238,7 +238,8 @@ export function rates(t) {
     apply_rate: ratio(t.applies, t.clicks),
   };
 }
-export const fmtRate = value => value == null ? "—" : `${value.toFixed(1)}%`;
+// digits: 小数の桁数（主要な率の表示は2桁。分析コメント等は従来どおり1桁）
+export const fmtRate = (value, digits = 1) => value == null ? "—" : `${value.toFixed(digits)}%`;
 export const fmtCount = value => value == null ? "—" : value.toLocaleString("ja-JP");
 export const fmtYen = value => value == null ? "—" : `¥${Math.round(value).toLocaleString("ja-JP")}`;
 // 費用と件数がそろうときだけ単価を出す（費用未入力は計算しない）
@@ -442,7 +443,12 @@ export function planSplit(records, { categoryId, media = DEFAULT_MEDIA, start, e
       const rows = r.daily.filter(d => d.date >= start && d.date <= end);
       if (rows.length) parts.push({ record: r, dates: rows.map(d => d.date), rows });
     } else if (r.period_start >= start && r.period_end <= end) {
-      parts.push({ record: r, dates: eachDay(r.period_start, r.period_end), rows: null });
+      // 期間合計の記録：重複の判定はレポート期間全体で行う。1日平均の日数は、確認済みの掲載開始日があればその日から数える
+      // （数値は按分しない。掲載開始日が未確認の求人別記録は、レポート期間の日数で計算したことを示す）
+      const confirmed = r.source_meta?.report === JOBS_REPORT && r.source_meta.posting_start?.confirmed ? r.source_meta.posting_start.date : null;
+      const from = confirmed && confirmed > r.period_start ? confirmed : r.period_start;
+      parts.push({ record: r, dates: eachDay(r.period_start, r.period_end), unitDates: eachDay(from, r.period_end), rows: null,
+        unconfirmedStart: r.source_meta?.report === JOBS_REPORT && !confirmed });
     }
   }
   const seen = new Map();
@@ -456,11 +462,12 @@ export function planSplit(records, { categoryId, media = DEFAULT_MEDIA, start, e
       seen.set(date, list);
     }
   });
-  const bucket = () => ({ dates: new Set(), unit_days: 0, sum: { impressions: 0, clicks: 0, apply_starts: 0, applies: 0, cost: 0 }, missing: new Set(), records: new Set(), postings: new Set() });
+  const bucket = () => ({ dates: new Set(), unit_days: 0, sum: { impressions: 0, clicks: 0, apply_starts: 0, applies: 0, cost: 0 }, missing: new Set(), records: new Set(), postings: new Set(), unconfirmed: 0 });
   const b = { free: bucket(), paid: bucket(), unknown: bucket(), split: bucket() };
-  const add = (target, record, dates, values) => {
+  const add = (target, record, dates, values, unconfirmed = false) => {
     for (const d of dates) target.dates.add(d);
     target.unit_days += dates.length;
+    if (unconfirmed) target.unconfirmed += 1;
     target.records.add(String(record.id));
     target.postings.add(postingKey(record) ?? "*");
     for (const key of [...METRICS, "cost"]) {
@@ -474,7 +481,7 @@ export function planSplit(records, { categoryId, media = DEFAULT_MEDIA, start, e
       for (const row of p.rows) add(b[dayPlan(planAt, p.record, row.date)], p.record, [row.date], row);
     } else {
       const plans = new Set(p.dates.map(d => dayPlan(planAt, p.record, d)));
-      add(plans.size === 1 ? b[[...plans][0]] : b.split, p.record, p.dates, p.record);
+      add(plans.size === 1 ? b[[...plans][0]] : b.split, p.record, p.unitDates, p.record, p.unconfirmedStart);
     }
   });
   const finish = (x, plan) => {
@@ -487,7 +494,7 @@ export function planSplit(records, { categoryId, media = DEFAULT_MEDIA, start, e
     return {
       plan, totals, rates: rates(totals), per_day: perDay, unit_cost: unitCost(totals.cost, totals.applies),
       day_count: dates.length, unit_days: x.unit_days, postings: x.postings.size, first: dates[0], last: dates[dates.length - 1],
-      ranges: dateRanges(dates), record_ids: [...x.records],
+      ranges: dateRanges(dates), record_ids: [...x.records], unconfirmed_start: x.unconfirmed,
     };
   };
   const free = finish(b.free, "free");
@@ -689,6 +696,8 @@ export function detectFormat(rows) {
   const header = (rows[0] || []).map(cleanHeader);
   const has = names => names.some(n => header.includes(cleanHeader(n)));
   if (has(INDEED_COLUMNS.date) && has(INDEED_COLUMNS.impressions) && has(INDEED_COLUMNS.clicks)) return "indeed";
+  // JobsCampaigns（求人ごとの期間合計）：日付の列が無く、参照番号・表示回数・クリック数がある
+  if (has(JOBS_COLUMNS.reference) && has(JOBS_COLUMNS.impressions) && has(JOBS_COLUMNS.clicks)) return "indeed_jobs";
   const labels = rows.map(r => cleanHeader(r[0]));
   if (labels.some(l => LEGACY_LABELS[l] === "impressions") && (rows[0] || []).slice(1).some(c => parseLegacyPeriod(c))) return "legacy";
   return null;
@@ -966,4 +975,223 @@ export function postingOf(group) {
   const title = text(group?.job_title).slice(0, LIMITS.title);
   if (!jobId && !title) return null;
   return { key: jobId ? `id:${jobId}` : `title:${title}`, job_id: jobId || null, title: title || null };
+}
+
+// ---------- Indeed「JobsCampaigns」形式（1行＝1求人原稿の期間合計） ----------
+// * 集計期間はCSV内に無いため、ファイル名の期間（JobsCampaigns_YYYYMMDD_YYYYMMDD）を初期値とし、利用者が確認して確定する。
+// * 作成日・最終更新日は求人原稿の情報であり、集計期間・掲載開始日としては使わない（参考表示のみ）。
+// * CSVの率（例：0.115385）は照合用に保持し、表示する率は件数から再計算する（0.115385 → 11.54%）。
+// * 状態（募集終了など）は原稿の情報として保持するだけで、職種マスタの募集状態は変更しない。
+// * 連絡先（メールアドレス等）の列は読み取っても保存しない。保存する項目は JOBS_META_KEYS に限る。
+// 列名は原本の表記揺れに備えて複数の候補で照合する（空白除去・NFKC後に完全一致）。
+const JOBS_COLUMNS = {
+  reference: ["参照番号", "求人参照番号", "求人の参照番号", "Referencenumber", "Reference"],
+  title: ["求人名", "求人タイトル", "職種名", "求人", "Jobtitle", "Job"],
+  url: ["求人URL", "求人のURL", "URL", "JobURL", "Link"],
+  company: ["企業名", "会社名", "Company", "Companyname"],
+  location: ["勤務地", "所在地", "Location"],
+  status: ["ステータス", "状態", "掲載状況", "求人のステータス", "Status", "Jobstatus"],
+  created: ["作成日", "作成日時", "Created", "Datecreated"],
+  updated: ["最終更新日", "更新日", "最終更新日時", "Lastupdated", "Updated"],
+  impressions: ["表示回数", "Impressions"],
+  clicks: ["クリック数", "Clicks"],
+  ctr: ["クリック率", "クリック率(CTR)", "CTR", "Clickthroughrate"],
+  apply_starts: ["応募開始数", "Applystarts"],
+  asr: ["応募開始率", "応募開始率(ASR)", "ASR", "Applystartrate"],
+  applies: ["応募数", "応募完了数", "Applies"],
+  completion: ["応募完了率", "Applycompletionrate"],
+  apply_rate: ["応募率", "Applyrate"],
+  cost: ["費用", "Cost", "Spend"],
+  currency: ["通貨", "Currency"],
+};
+// 連絡先・個人を特定しうる列（値は保存も画面表示もしない）
+const SENSITIVE_HEADER = /(メール|e-?mail|mail|電話|tel|fax|連絡先|担当者|応募者|氏名)/i;
+const JOBS_RATE_KEYS = { ctr: ["clicks", "impressions"], asr: ["apply_starts", "clicks"], completion: ["applies", "apply_starts"], apply_rate: ["applies", "clicks"] };
+const JOBS_TOTAL_LABEL = /^(合計|総計|total)$/i;
+export const JOBS_REPORT = "jobs_campaigns";
+
+// CSVの率。「0.115385」（割合）または「11.54%」（百分率）。百分率の値を返す（読めなければ null）
+export function parseCsvRate(value) {
+  const s = String(value ?? "").trim().normalize("NFKC").replace(/,/g, "");
+  if (!s || s === "-" || s === "—") return null;
+  const m = /^(\d+(?:\.\d+)?)(%)?$/.exec(s);
+  if (!m) return null;
+  return m[2] ? Number(m[1]) : Number(m[1]) * 100;
+}
+
+// 「2026/10/03」「2026-10-03 12:34」「2026年10月3日」など。日付部分だけ（読めなければ null）
+function parseLooseDate(value) {
+  const s = String(value ?? "").trim().normalize("NFKC").split(/[\sT]/)[0];
+  return parseCsvDate(s);
+}
+
+const cellOf = (row, index) => index == null ? "" : String(row[index] ?? "").trim();
+
+export function parseIndeedJobs(rows, fileName = "") {
+  const header = (rows[0] || []).map(cleanHeader);
+  const col = {};
+  for (const [key, names] of Object.entries(JOBS_COLUMNS)) {
+    const index = header.findIndex(h => names.some(n => cleanHeader(n) === h));
+    col[key] = index >= 0 ? index : null;
+  }
+  const usedIndexes = new Set(Object.values(col).filter(i => i != null));
+  const columns = { used: [], ignored: [], sensitive: [] };
+  (rows[0] || []).forEach((h, i) => {
+    const name = String(h ?? "").replace(/^﻿/, "").trim() || `（${i + 1}列目）`;
+    if (SENSITIVE_HEADER.test(cleanHeader(h)) && !usedIndexes.has(i)) columns.sensitive.push(name);
+    else if (usedIndexes.has(i)) columns.used.push(name);
+    else columns.ignored.push(name);
+  });
+  const warnings = [];
+  const errors = [];
+  const missing = ["apply_starts", "applies", "cost"].filter(k => col[k] == null).map(k => k === "cost" ? "費用" : METRIC_LABELS[k]);
+  if (missing.length) warnings.push(`CSVに${missing.join("・")}の列がありません（未取得として扱います）`);
+  if (col.title == null) warnings.push("求人名の列がありません");
+  const filePeriod = fileNamePeriod(fileName);
+  if (!filePeriod) warnings.push("ファイル名から集計期間を読み取れません。集計期間を入力してください（作成日・最終更新日は集計期間ではありません）");
+  const currencies = new Set();
+  const list = [];
+  rows.slice(1).forEach((row, i) => {
+    if (isBlankRow(row)) return;
+    const line = i + 2;
+    const reference = cellOf(row, col.reference);
+    const title = cellOf(row, col.title);
+    if (!reference && JOBS_TOTAL_LABEL.test(title.normalize("NFKC").replace(/\s+/g, ""))) { warnings.push(`${line}行目の合計行は取り込みません`); return; }
+    const totals = {};
+    const issues = [];
+    for (const metric of METRICS) {
+      const parsed = col[metric] == null ? { value: null } : parseCount(row[col[metric]]);
+      if (parsed.error) { issues.push(`${METRIC_LABELS[metric]}「${row[col[metric]]}」が0以上の整数ではありません`); totals[metric] = null; }
+      else totals[metric] = parsed.value;
+    }
+    const cost = col.cost == null ? { value: null } : parseCost(row[col.cost]);
+    if (cost.error) { issues.push(`費用「${row[col.cost]}」を読み取れません`); totals.cost = null; } else totals.cost = cost.value;
+    const currency = cellOf(row, col.currency);
+    if (currency) currencies.add(currency);
+    // CSVの率は照合用。件数からの計算値と比べ、0.05ポイントを超えて違えば注意を出す（値は件数からの計算を使う）
+    const calc = rates(totals);
+    const csvRates = {};
+    const rateNotes = [];
+    for (const key of Object.keys(JOBS_RATE_KEYS)) {
+      const raw = cellOf(row, col[key]);
+      if (!raw) continue;
+      const percent = parseCsvRate(raw);
+      csvRates[key] = { raw: raw.slice(0, 20), percent };
+      if (percent == null) rateNotes.push(`CSVの${RATE_LABELS[key]}「${raw.slice(0, 20)}」を読み取れません`);
+      else if (calc[key] != null && Math.abs(percent - calc[key]) > 0.05)
+        rateNotes.push(`CSVの${RATE_LABELS[key]}（${fmtRate(percent, 2)}）と件数からの計算値（${fmtRate(calc[key], 2)}）が異なります。件数からの計算値を使います`);
+    }
+    const rawUrl = cellOf(row, col.url);
+    const url = safeUrl(rawUrl);
+    const notes = [...issues, ...rateNotes];
+    if (rawUrl && !url) notes.push("求人URLが http(s) の正しいURLではないため保存しません");
+    if (totals.cost == null && col.cost != null) notes.push("費用が空欄です（無料・0円とはみなしません）");
+    if (!reference && !title) notes.push("参照番号・求人名が空欄のため、求人原稿を識別できません（取り込めません）");
+    list.push({
+      line, key: reference ? `id:${reference}` : `title:${title}`, reference: reference.slice(0, LIMITS.title) || null, title: title.slice(0, LIMITS.title) || null,
+      url, company: cellOf(row, col.company).slice(0, LIMITS.company) || null, location: cellOf(row, col.location).slice(0, LIMITS.title) || null,
+      csv_status: cellOf(row, col.status).slice(0, 50) || null,
+      created_on: parseLooseDate(cellOf(row, col.created)), updated_on: parseLooseDate(cellOf(row, col.updated)),
+      currency: currency || null, totals, rates: calc, csv_rates: csvRates, notes,
+      blocked: issues.length > 0 || (!reference && !title),
+    });
+  });
+  // 同じ求人原稿の行が複数ある場合は合算せず、どちらも取り込まない
+  const counts = new Map();
+  for (const p of list) counts.set(p.key, (counts.get(p.key) || 0) + 1);
+  for (const p of list) if (counts.get(p.key) > 1) { p.blocked = true; p.notes.unshift(`同じ参照番号（求人原稿）の行が${counts.get(p.key)}行あります。合算せず、この求人は取り込めません`); }
+  if ([...currencies].some(c => c.toUpperCase() !== "JPY")) warnings.push(`通貨が円以外の行があります（${[...currencies].join("・")}）。費用の扱いを確認してください`);
+  if (columns.sensitive.length) warnings.push(`連絡先などの列（${columns.sensitive.join("・")}）は取り込みません`);
+  if (!list.length && !errors.length) errors.push("取り込める求人の行がありません");
+  return {
+    format: "indeed_jobs", postings: list, file_period: filePeriod, columns, warnings, errors,
+    definitions: {
+      impressions: "Indeed「表示回数」", clicks: "Indeed「クリック数」",
+      apply_starts: "Indeed「応募開始数」（応募を開始した数）", applies: "Indeed「応募数」（応募を完了した数）", cost: "Indeed「費用」",
+    },
+  };
+}
+
+// 期間がちょうど1か月（1日〜末日）か
+export const isFullMonth = (start, end) => isDate(start) && isDate(end) && start.endsWith("-01") && monthOf(start) === monthOf(end) && monthRange(monthOf(start)).end === end;
+
+// 保存する source_meta（JobsCampaigns）。この一覧以外の項目（連絡先・企業名など）は保存しない
+const JOBS_META_KEYS = ["report", "reference", "job_title", "job_url", "location", "csv_status", "posting_created_on", "posting_updated_on",
+  "currency", "csv_rates", "file_period", "period_confirmed", "posting_start", "definitions", "scope_confirmed"];
+export function sanitizeJobsMeta(meta) {
+  const m = meta && typeof meta === "object" && !Array.isArray(meta) ? meta : {};
+  const str = (v, max) => typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null;
+  const date = v => isDate(v) ? v : null;
+  const out = {
+    report: JOBS_REPORT,
+    reference: str(m.reference, LIMITS.title), job_title: str(m.job_title, LIMITS.title), job_url: safeUrl(m.job_url),
+    location: str(m.location, LIMITS.title), csv_status: str(m.csv_status, 50),
+    posting_created_on: date(m.posting_created_on), posting_updated_on: date(m.posting_updated_on), currency: str(m.currency, 10),
+    csv_rates: {}, file_period: m.file_period && date(m.file_period.start) && date(m.file_period.end) ? { start: m.file_period.start, end: m.file_period.end } : null,
+    period_confirmed: m.period_confirmed === true,
+    // 実際の掲載開始日（確認できた場合のみ）。空欄は「未確認」で、推測しない
+    posting_start: { date: date(m.posting_start?.date), confirmed: Boolean(date(m.posting_start?.date)) },
+    definitions: {
+      impressions: "Indeed「表示回数」", clicks: "Indeed「クリック数」",
+      apply_starts: "Indeed「応募開始数」（応募を開始した数）", applies: "Indeed「応募数」（応募を完了した数）", cost: "Indeed「費用」",
+    },
+    scope_confirmed: m.scope_confirmed === true,
+  };
+  for (const key of Object.keys(JOBS_RATE_KEYS)) {
+    const r = m.csv_rates?.[key];
+    if (!r || typeof r !== "object") continue;
+    out.csv_rates[key] = { raw: str(r.raw, 20), percent: typeof r.percent === "number" && Number.isFinite(r.percent) ? r.percent : null };
+  }
+  for (const key of Object.keys(out)) if (!JOBS_META_KEYS.includes(key)) delete out[key];
+  return out;
+}
+
+// JobsCampaigns の1求人を登録用の実績にする（日別データなし・期間は利用者が確認した集計期間）
+export function jobsPostingRecord(posting, { categoryId, periodStart, periodEnd, planType, postingStart = "", periodConfirmed = false, scopeConfirmed = false, note = "", filePeriod = null, media = DEFAULT_MEDIA }) {
+  return {
+    record: {
+      category_id: categoryId, media, period_start: periodStart, period_end: periodEnd, plan_type: planType,
+      impressions: posting.totals.impressions, clicks: posting.totals.clicks, apply_starts: posting.totals.apply_starts, applies: posting.totals.applies,
+      cost: posting.totals.cost, note: note || null, source: "indeed_csv", daily: null,
+      source_meta: sanitizeJobsMeta({
+        reference: posting.reference, job_title: posting.title, job_url: posting.url, location: posting.location, csv_status: posting.csv_status,
+        posting_created_on: posting.created_on, posting_updated_on: posting.updated_on, currency: posting.currency, csv_rates: posting.csv_rates,
+        file_period: filePeriod, period_confirmed: periodConfirmed, posting_start: { date: postingStart || null }, scope_confirmed: scopeConfirmed,
+      }),
+    },
+    posting: { job_id: posting.reference, job_title: posting.title },
+  };
+}
+
+// 求人名・勤務地から職種の候補（候補の文字がすべて含まれる職種が1つだけのとき）。確定はしない
+export function suggestJobsCategory(categories, posting) {
+  const hay = `${posting?.title || ""} ${posting?.location || ""}`.normalize("NFKC").toLowerCase();
+  if (!hay.trim()) return null;
+  const tokens = c => c.name.normalize("NFKC").toLowerCase().split(/[()（）\s]+/).map(t => t.replace(/オペ$/, "")).filter(Boolean);
+  const hits = categories.filter(c => tokens(c).length && tokens(c).every(t => hay.includes(t)));
+  return hits.length === 1 ? hits[0] : null;
+}
+
+// 既存の有効な実績のうち、取込予定の記録と期間が重なり、重複として扱われるもの（取込前の確認用。置き換えは利用者が選ぶ）
+// 取込予定は必ず求人原稿を持つため、重複になるのは職種全体の記録（求人原稿の指定なし）か、同じ求人原稿の記録だけ。
+// postingId が null（新しい求人原稿）の場合、別の求人原稿の記録は重複にならないため含めない
+// kind: same_period（同じ期間）／spanning（期間の外にはみ出す旧記録。例：9/7〜10/7）／partial（期間の一部だけの記録。例：10/1〜10/19）
+export function relatedRecords(active, { categoryId, media = DEFAULT_MEDIA, periodStart, periodEnd, postingId = null }) {
+  if (!categoryId || !isDate(periodStart) || !isDate(periodEnd)) return [];
+  return active.filter(r => String(r.category_id) === String(categoryId) && r.media === media
+    && r.period_start <= periodEnd && periodStart <= r.period_end
+    && (r.posting_id == null || (postingId != null && String(r.posting_id) === String(postingId))))
+    .map(r => {
+      const kind = r.period_start === periodStart && r.period_end === periodEnd ? "same_period"
+        : r.period_start < periodStart || r.period_end > periodEnd ? "spanning" : "partial";
+      return { id: String(r.id), kind, record: r };
+    })
+    .sort((a, b) => a.record.period_start.localeCompare(b.record.period_start) || Number(a.id) - Number(b.id));
+}
+
+// 置き換え候補の旧記録（新しい集計期間の内側にあるもの）が、新しい記録より大きい数値を持つ
+// ＝集計対象（求人原稿）が異なる可能性。自動では置き換えない。期間が外へはみ出す旧記録は数値を比べられないため対象外
+export function scopeMismatch(oldRecord, totals, period = null) {
+  if (period && (oldRecord.period_start < period.start || oldRecord.period_end > period.end)) return false;
+  return ["impressions", "clicks"].some(k => oldRecord[k] != null && totals[k] != null && oldRecord[k] > totals[k]);
 }

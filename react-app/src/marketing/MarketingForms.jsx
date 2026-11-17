@@ -1,7 +1,7 @@
 // 求人分析の入力ダイアログ（実績の登録・修正、取消、職種の管理、掲載状態の変更、参考求人）。
 import React, { useEffect, useRef, useState } from "react";
 import {
-  DEFAULT_MEDIA, METRICS, METRIC_LABELS, PLAN_STATUS, PLAN_TYPES, fmtRate, isDate, normalizeRecord, periodLabel, rates, recordWarnings, slashDate,
+  DEFAULT_MEDIA, JOBS_REPORT, METRICS, METRIC_LABELS, PLAN_STATUS, PLAN_TYPES, fmtRate, isDate, normalizeRecord, periodLabel, rates, recordWarnings, slashDate,
 } from "../../../shared/jobMarketing.mjs";
 import { marketingApi, errorText, planLabel, postingLabel, sourceLabel, statusLabel } from "./marketingApi";
 
@@ -93,8 +93,10 @@ const emptyForm = (categoryId, month) => ({
 // 月次実績の登録・修正（修正は元の記録を残して新しい記録で置き換える）
 export function RecordForm({ categories, postings = [], records, initial, defaultCategory, defaultMonth, onClose, onSaved }) {
   const editing = Boolean(initial);
-  // CSVの日別実績は、数値・期間を変えない（掲載種別とメモだけ修正。数値は取消して再取込）
-  const locked = Boolean(initial?.daily?.length);
+  // CSVの日別実績・JobsCampaigns（求人別・期間合計）の実績は、数値・期間を変えない（掲載種別とメモだけ修正。数値は取消して再取込）
+  // サーバーも同じ条件で数値・期間を元の記録から引き継ぐ
+  const jobsRecord = initial?.source_meta?.report === JOBS_REPORT;
+  const locked = Boolean(initial?.daily?.length) || jobsRecord;
   const [form, setForm] = useState(() => editing
     ? Object.fromEntries(Object.entries({ ...emptyForm(), ...initial }).filter(([k]) => k in emptyForm()).map(([k, v]) => [k, v == null ? "" : String(v)]))
     : emptyForm(defaultCategory, defaultMonth));
@@ -156,7 +158,7 @@ export function RecordForm({ categories, postings = [], records, initial, defaul
         ))}
         <label>掲載費用（円）<input type="number" min="0" step="0.01" inputMode="decimal" placeholder="未入力" value={form.cost} disabled={locked} onChange={e => set("cost", e.target.value)} /></label>
       </div>
-      {locked && <p className="jm-sub is-info">CSVの日別実績です。掲載種別とメモだけ修正できます。数値・期間を直すときは取消して再取込してください。</p>}
+      {locked && <p className="jm-sub is-info">{jobsRecord ? "CSV（求人別・期間合計）の実績です。" : "CSVの日別実績です。"}掲載種別とメモだけ修正できます。数値・期間を直すときは取消して再取込してください。</p>}
       <div className="jm-rate-preview" aria-live="polite">
         <span>クリック率（CTR） <b>{fmtRate(r.ctr)}</b></span><span>応募開始率 <b>{fmtRate(r.asr)}</b></span>
         <span>応募完了率 <b>{fmtRate(r.completion)}</b></span><span>応募率 <b>{fmtRate(r.apply_rate)}</b></span>

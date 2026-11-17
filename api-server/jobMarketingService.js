@@ -138,6 +138,7 @@ async function voidPlanEvent(store, id, body, actor) {
 function resolvePlan(m, active, categories, entries, postings = []) {
   const planned = [];
   const problems = [];
+  const claimed = new Set(); // 同じ登録内で、先の記録が置き換える旧記録（1つの旧記録は1回だけ置き換える）
   entries.forEach((entry, index) => {
     const { record } = entry;
     const category = categories.find(c => String(c.id) === String(record.category_id));
@@ -153,7 +154,10 @@ function resolvePlan(m, active, categories, entries, postings = []) {
       // 職種の登録先を誤った記録の修正もできるよう、置き換え先の職種は問わない
       if (!target) { problems.push({ index, code: "stale", message: "置き換え対象の記録が既に修正・取消されています。画面を読み込み直してください" }); return; }
     }
-    const others = [...active, ...planned.map(p => ({ ...p.record, id: `new-${p.index}` }))];
+    const twice = replaceIds.filter(id => claimed.has(id));
+    if (twice.length) { problems.push({ index, code: "replace_twice", message: `記録（${twice.map(id => "#" + id).join("、")}）は、この取込の別の求人で置き換えます。同じ記録は1回だけ置き換えられます` }); return; }
+    // 先の記録が置き換える旧記録は、後の記録との重なりの判定から除く
+    const others = [...active.filter(r => !claimed.has(String(r.id))), ...planned.map(p => ({ ...p.record, id: `new-${p.index}` }))];
     const conflicts = m.findConflicts(others, record, replaceIds);
     const same = conflicts.filter(c => c.type === "same_period");
     if (same.length) {
@@ -168,6 +172,7 @@ function resolvePlan(m, active, categories, entries, postings = []) {
       problems.push({ index, code: "overlap_reason", message: "期間が重なったまま登録する理由を入力してください", conflicts });
       return;
     }
+    for (const id of replaceIds) claimed.add(id);
     planned.push({ index, record, replaceIds, conflicts, overlapReason: conflicts.length ? String(entry.overlap_reason).trim().slice(0, m.LIMITS.reason) : null });
   });
   return { planned, problems };
@@ -187,6 +192,7 @@ function normalizeEntry(m, raw, defaults = {}) {
 async function writePlanned(tx, m, planned, actor, importId, pendingPostings = new Map()) {
   const ids = [];
   const created = new Map();
+  const idByIndex = new Map(); // 同じ登録内の先行する記録（判定時は "new-<index>"）を、記録には実際のIDで残す
   for (const p of planned) {
     // 新しい求人原稿は実績の登録時に作成する
     const pid = p.record.posting_id;
@@ -196,11 +202,15 @@ async function writePlanned(tx, m, planned, actor, importId, pendingPostings = n
     }
     const [first, ...rest] = p.replaceIds;
     const meta = { ...(p.record.source_meta || {}) };
-    if (p.overlapReason) meta.overlap = { reason: p.overlapReason, with: p.conflicts.map(c => c.id) };
+    if (p.overlapReason) {
+      const realId = cid => String(cid).startsWith("new-") ? String(idByIndex.get(Number(String(cid).slice(4))) ?? cid) : String(cid);
+      meta.overlap = { reason: p.overlapReason, with: p.conflicts.map(c => realId(c.id)) };
+    }
     const id = await tx.insertRecord({
       ...p.record, kind: "metric", supersedes_id: first ?? null, import_id: importId ?? null,
       source_meta: Object.keys(meta).length ? meta : null, reason: null, actor,
     });
+    idByIndex.set(p.index, id);
     // 2件目以降の置き換え対象は取消の行を追記する（どの記録で置き換えたかを残す）
     for (const rid of rest) {
       await tx.insertRecord({ kind: "void", supersedes_id: rid, category_id: p.record.category_id, reason: `記録#${id}で置き換え`, source_meta: { replaced_by: String(id) }, actor });
@@ -228,10 +238,15 @@ async function saveRecord(store, body, actor) {
     const active = m.activeRecords(await tx.listRecords());
     const categories = await tx.listCategories();
     const target = body?.supersedes_id == null ? null : active.find(r => String(r.id) === String(body.supersedes_id));
-    const keepDaily = Boolean(target && Array.isArray(target.daily) && target.daily.length);
+    // JobsCampaigns の実績も同じく、数値・期間・求人原稿・取込元の情報を引き継ぎ、掲載種別とメモだけを修正する
+    const keepDaily = Boolean(target && ((Array.isArray(target.daily) && target.daily.length) || target.source_meta?.report === m.JOBS_REPORT));
     const entry = normalizeEntry(m, keepDaily
       ? { ...body, record: { ...Object.fromEntries(DAILY_KEEP.map(k => [k, target[k]])), plan_type: body.record?.plan_type, note: body.record?.note } }
       : body);
+    // JobsCampaigns の記録は取込（format: indeed_jobs）だけで作る。手入力から名乗ることはできない（検証・保存項目の制限を回避させない）
+    if (!keepDaily && entry.record.source_meta?.report === m.JOBS_REPORT) throw m.marketingError(400, "JobsCampaigns の実績はCSV取込から登録してください");
+    // CSVの実績（日別・求人別の期間合計）の修正は、掲載種別とメモだけ。元の記録以外を置き換えることはできない
+    if (keepDaily && entry.replace_ids.some(id => id !== String(body.supersedes_id))) throw m.marketingError(400, "CSVの実績の修正では、他の記録を置き換えられません");
     if (body?.supersedes_id != null) entry.replace_ids = [String(body.supersedes_id), ...entry.replace_ids.filter(id => id !== String(body.supersedes_id))];
     const { planned, problems } = resolvePlan(m, active, categories, [entry], await tx.listPostings());
     const warnings = m.recordWarnings(entry.record);
@@ -262,13 +277,33 @@ async function importCsv(store, body, actor) {
   const fileHash = String(body?.file_hash || "");
   if (!/^[0-9a-f]{64}$/.test(fileHash)) throw m.marketingError(400, "ファイルの識別情報が正しくありません");
   const fileName = String(body?.file_name || "").trim().slice(0, 255) || "(名称なし)";
-  const format = body?.format === "indeed" ? "indeed_csv" : body?.format === "legacy" ? "legacy_csv" : null;
+  // JobsCampaigns（求人ごとの期間合計）は、DBの取込形式・取得元は既存の indeed_csv のまま、source_meta.report で区別する（migration不要）
+  const jobs = body?.format === "indeed_jobs";
+  const format = body?.format === "indeed" || jobs ? "indeed_csv" : body?.format === "legacy" ? "legacy_csv" : null;
   if (!format) throw m.marketingError(400, "CSVの形式が正しくありません");
   const rawEntries = Array.isArray(body?.entries) ? body.entries : [];
   if (!rawEntries.length) throw m.marketingError(400, "登録する実績を1件以上選択してください");
   if (rawEntries.length > 50) throw m.marketingError(400, "一度に登録できる実績は50件までです");
-  const entries = rawEntries.map(raw => normalizeEntry(m, raw, { source: format }));
-  if (format === "indeed_csv" && entries.some(e => !e.record.daily)) throw m.marketingError(400, "Indeed CSVの実績には日別データが必要です");
+  // JobsCampaigns の source_meta は保存してよい項目だけに絞る（連絡先・企業名などは保存しない）
+  const entries = rawEntries.map(raw => normalizeEntry(m,
+    jobs ? { ...raw, record: { ...raw?.record, daily: null, source_meta: m.sanitizeJobsMeta(raw?.record?.source_meta) } } : raw, { source: format }));
+  if (format === "indeed_csv" && !jobs && entries.some(e => !e.record.daily)) throw m.marketingError(400, "Indeed CSVの実績には日別データが必要です");
+  if (!jobs && entries.some(e => e.record.source_meta?.report === m.JOBS_REPORT)) throw m.marketingError(400, "JobsCampaigns の実績は JobsCampaigns 形式で取り込んでください");
+  if (jobs) {
+    for (const e of entries) {
+      if (!e.posting?.job_id) throw m.marketingError(400, "JobsCampaigns の実績には求人の参照番号が必要です");
+      // 表示用の参照番号・求人名と、重複判定に使う求人原稿（posting）を一致させる（食い違う入力は拒否し、保存値は posting に統一）
+      const meta = e.record.source_meta;
+      if (meta.reference && meta.reference !== e.posting.job_id) throw m.marketingError(400, "参照番号が一致しません。CSVを読み込み直してください");
+      meta.reference = e.posting.job_id;
+      meta.job_title = e.posting.title;
+      // 費用は円のみ扱う（円以外の費用を円として合算しない）
+      if (e.record.cost != null && meta.currency && meta.currency.toUpperCase() !== "JPY") throw m.marketingError(400, `通貨が円以外（${meta.currency}）の費用は取り込めません`);
+      if (e.record.source_meta?.period_confirmed !== true) throw m.marketingError(400, "集計期間を確認してから取り込んでください（作成日・最終更新日は集計期間ではありません）");
+      const start = e.record.source_meta.posting_start?.date;
+      if (start && start > e.record.period_end) throw m.marketingError(400, "掲載開始日が集計期間の終了日より後になっています");
+    }
+  }
   const references = (Array.isArray(body?.references) ? body.references : []).slice(0, 50).map(ref => ({ category_id: String(ref?.category_id ?? ""), ...m.validateReference(ref) }));
   return store.transaction(async tx => {
     await tx.lock();
@@ -300,7 +335,29 @@ async function importCsv(store, body, actor) {
     });
     const { planned, problems } = resolvePlan(m, active, categories, entries, postings);
     problems.push(...postingProblems);
-    if (stillActive.length) problems.unshift({ index: null, code: "duplicate_file", message: `このCSVは登録済みです（${stillActive[0].created_at} 取込）。修正する場合は、登録済みの記録を取消してから取り込んでください` });
+    // 置き換える旧記録のうち、求人原稿の指定がない記録（職種全体の合計の可能性）で、新しい期間の内側にあり、
+    // 表示回数・クリック数が新しい記録より多いものは、集計対象の確認（scope_confirmed）を必須にする（同じ求人原稿の記録は同じ集計対象）
+    if (jobs) {
+      entries.forEach((e, index) => {
+        // 置き換え対象は、この記録と実際に重なる記録（同じ職種・媒体・原稿または職種全体・期間が重なる）だけ。関係のない記録は置き換えない
+        const overlapping = new Set(m.findConflicts(active, e.record).map(c => c.id));
+        const unrelated = e.replace_ids.filter(id => active.some(r => String(r.id) === id) && !overlapping.has(id));
+        if (unrelated.length) problems.push({ index, code: "replace_unrelated", message: `置き換え対象（${unrelated.map(id => "#" + id).join("、")}）は、この求人・期間と重なりません。置き換えの選択をやり直してください` });
+        const period = { start: e.record.period_start, end: e.record.period_end };
+        const mismatch = e.replace_ids.map(id => active.find(r => String(r.id) === id)).filter(r => r && r.posting_id == null && m.scopeMismatch(r, e.record, period));
+        if (mismatch.length && e.record.source_meta?.scope_confirmed !== true)
+          problems.push({ index, code: "scope_unconfirmed", message: `置き換える記録（${mismatch.map(r => "#" + r.id).join("、")}）の方が表示回数・クリック数が多く、集計対象が異なる可能性があります。確認してから置き換えてください` });
+      });
+    }
+    if (stillActive.length && jobs) {
+      // JobsCampaigns：同じCSVのうち、登録済みの求人（同じ原稿・同じ期間・同じファイル）だけを止める。未登録の求人は追加できる
+      const fromFile = new Set(stillActive.map(i => String(i.id)));
+      entries.forEach((e, index) => {
+        const done = active.find(r => fromFile.has(String(r.import_id)) && String(r.posting_id) === String(e.record.posting_id)
+          && r.period_start === e.record.period_start && r.period_end === e.record.period_end);
+        if (done) problems.unshift({ index, code: "duplicate_file", message: `このCSVの「${e.posting?.title || e.posting?.job_id}」は登録済みです（${stillActive[0].created_at} 取込）` });
+      });
+    } else if (stillActive.length) problems.unshift({ index: null, code: "duplicate_file", message: `このCSVは登録済みです（${stillActive[0].created_at} 取込）。修正する場合は、登録済みの記録を取消してから取り込んでください` });
     for (const ref of references) if (!categories.some(c => String(c.id) === ref.category_id)) problems.push({ index: null, code: "category", message: "参考求人の職種が見つかりません" });
     const warnings = entries.map(e => m.recordWarnings(e.record));
     if (body?.dry_run === true) return { dry_run: true, problems, warnings, previous_imports: previous.length };
