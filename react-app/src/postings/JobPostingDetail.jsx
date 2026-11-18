@@ -96,14 +96,16 @@ export default function JobPostingDetail() {
         </div>
         <div className="jp-detail-actions">
           <button type="button" className="jm-btn is-primary" onClick={() => setDialog({ type: "revision" })}>{current ? "求人原稿を編集" : "求人原稿を登録"}</button>
-          <VisibilityButton posting={p} onClick={() => setDialog({ type: "visibility" })} />
           <Link className="jm-btn jp-btn-link" to={analysisPath(p)} state={analysisState}>求人分析で見る</Link>
+          {/* 公開状態の切替は常に一番右（折り返しても最後） */}
+          <VisibilityButton posting={p} onClick={() => setDialog({ type: "visibility" })} />
         </div>
         <div className="jp-detail-counts">
-          <span className="jp-detail-flags"><PostingFlags posting={p} analysisTo={analysisPath(p)} analysisState={analysisState}
+          <span className="jp-detail-flags"><PostingFlags showPlan={false} posting={p} analysisTo={analysisPath(p)} analysisState={analysisState}
             onOpen={kind => setDialog({ type: kind === "plan" && category ? "plan" : "revision" })} /></span>
-          <span>応募者数</span><CountButton value={p.applicants} label="応募者" onClick={() => setDialog({ type: "people", kind: "applied" })} />
-          <span>採用数</span><CountButton value={p.hires} label="採用" onClick={() => setDialog({ type: "people", kind: "hired" })} />
+          {/* ラベルと数字を1つのまとまりにする（まとまりの間だけ広く空ける） */}
+          <span className="jp-stat"><span className="jp-stat-label">応募者数</span><CountButton compact value={p.applicants} label="応募者" onClick={() => setDialog({ type: "people", kind: "applied" })} /></span>
+          <span className="jp-stat"><span className="jp-stat-label">採用数</span><CountButton compact value={p.hires} label="採用" onClick={() => setDialog({ type: "people", kind: "hired" })} /></span>
           {/* 現在の状態の日付（公開中なら今回の公開開始日、非公開なら非公開日）。過去の期間は公開状態の履歴に表示 */}
           {p.visibility === "public" && <span className="jp-since">公開開始日 {slash(p.visibility_since)}</span>}
           {p.visibility === "private" && <span className="jp-since">非公開日 {slash(p.visibility_since)}{visibility.first_public ? `（初回公開 ${slash(visibility.first_public)}）` : ""}</span>}

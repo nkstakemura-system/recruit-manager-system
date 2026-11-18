@@ -21,23 +21,26 @@ export function VisibilityButton({ posting, onClick }) {
 }
 // 求人の状態（重要なものだけ。押せるものは該当の操作へ直接移動する。押せない表示はボタンの見た目にしない）
 // onOpen(kind)：revision＝求人原稿の登録、plan＝掲載状態の設定。analysisTo：求人分析へのリンク先（実績がある場合）
-export function PostingFlags({ posting, onOpen, analysisTo, analysisState }) {
+// showPlan=false：掲載種別を別の場所に表示している画面（求人詳細の上部）では、未設定のときの操作だけを出す
+export function PostingFlags({ posting, onOpen, analysisTo, analysisState, showPlan = true }) {
   return (
     <>
       {posting.revision_no === 0 && <button type="button" className="jp-flag is-action" onClick={() => onOpen("revision")}>原稿未登録</button>}
       {posting.plan_status == null
         ? <button type="button" className="jp-flag is-action" onClick={() => onOpen("plan")}>掲載種別未設定</button>
-        : <span className={`jm-dot is-${posting.plan_status}`}>{PLAN_STATUS[posting.plan_status]}</span>}
+        : showPlan && <span className={`jm-dot is-${posting.plan_status}`}>{PLAN_STATUS[posting.plan_status]}</span>}
       {posting.record_count > 0 && <Link className="jp-flag is-link" to={analysisTo} state={analysisState}>実績あり</Link>}
     </>
   );
 }
 export const analysisPath = p => `/job-marketing?category=${encodeURIComponent(p.category_id)}&posting=${encodeURIComponent(p.id)}`;
 
-export function CountButton({ value, label, onClick }) {
+// compact：求人詳細の「応募者数 0」用（ラベルの横に置く。0 も数字と同じ内側の余白にして、ラベルと数字の間隔をそろえる）
+export function CountButton({ value, label, onClick, compact = false }) {
+  const cls = `jp-count${compact ? " is-compact" : ""}`;
   return value > 0
-    ? <button type="button" className="jp-count" aria-label={`${label} ${value}人の一覧`} onClick={onClick}>{value}</button>
-    : <span className="jp-count is-zero" aria-label={`${label} 0人`}>0</span>;
+    ? <button type="button" className={cls} aria-label={`${label} ${value}人の一覧`} onClick={onClick}>{value}</button>
+    : <span className={`${cls} is-zero`} aria-label={`${label} 0人`}>0</span>;
 }
 
 export default function JobPostings() {

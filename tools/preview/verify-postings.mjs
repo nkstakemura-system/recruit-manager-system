@@ -219,6 +219,24 @@ try {
   await go(app + "/jobs/3", "!!document.querySelector('.jp-detail-head')", "detail");
   const head = await evaluate(`__q(".jp-detail-head").innerText.replace(/\\s+/g, " ")`);
   ok("詳細の上部：タイトル・職種・媒体・求人ID・公開状態・掲載種別・版・主要操作", [HW, "電気工事士", "ハローワーク", "00000-00000001", "公開中", "無料掲載", "第2版", "求人原稿を編集", "非公開にする", "求人分析で見る", "応募者数", "採用数"].every(t => head.includes(t)), head);
+  // 詳細の上部の配置（実際の描画位置）：右上の3つのボタンは高さ・上端・文字サイズ・左右余白が同じで、文字は折り返さない。
+  // 応募者数・採用数はラベルと数字が1つのまとまりで、ラベルから数字までの距離は件数（0・3）によらず同じ、まとまりの間はそれより広い
+  const detailLayout = await evaluate(`(() => {
+    const r = el => el.getBoundingClientRect();
+    const btns = [...document.querySelectorAll(".jp-detail-actions > *")];
+    const digitLeft = el => { const range = document.createRange(); range.selectNodeContents(el); return range.getBoundingClientRect().left; };
+    const stats = [...document.querySelectorAll(".jp-detail-counts .jp-stat")].map(s => {
+      const label = s.querySelector(".jp-stat-label"), num = s.querySelector(".jp-count");
+      return { gap: Math.round(digitLeft(num) - r(label).right), cyDiff: Math.abs((r(label).top + r(label).height / 2) - (r(num).top + r(num).height / 2)), right: r(s).right, left: r(s).left };
+    });
+    return { heights: [...new Set(btns.map(b => Math.round(r(b).height)))], tops: [...new Set(btns.map(b => Math.round(r(b).top)))],
+      fonts: [...new Set(btns.map(b => getComputedStyle(b).fontSize))], pads: [...new Set(btns.map(b => getComputedStyle(b).paddingLeft + "/" + getComputedStyle(b).paddingRight))],
+      nowrap: btns.every(b => getComputedStyle(b).whiteSpace === "nowrap"), stats, groupGap: stats.length === 2 ? Math.round(stats[1].left - stats[0].right) : null };
+  })()`);
+  ok("詳細の上部：3つのボタンの高さ・上端・文字サイズ・左右余白が同じ（文字は折り返さない）",
+    detailLayout.heights.length === 1 && detailLayout.tops.length === 1 && detailLayout.fonts.length === 1 && detailLayout.pads.length === 1 && detailLayout.nowrap, JSON.stringify(detailLayout));
+  ok("詳細の上部：応募者数・採用数はラベルと数字のまとまり（距離は件数によらず同じ・まとまりの間はそれより広い）",
+    detailLayout.stats.length === 2 && new Set(detailLayout.stats.map(s => s.gap)).size === 1 && detailLayout.stats.every(s => s.cyDiff <= 1) && detailLayout.groupGap > detailLayout.stats[0].gap, JSON.stringify(detailLayout.stats) + " groupGap " + detailLayout.groupGap);
   ok("求人内容：勤務地・雇用形態・給与・勤務時間・休日・求人担当者・全文", await evaluate(`(() => { const t = __section("求人内容").innerText; return ["勤務地", "架空県架空市", "雇用形態", "給与条件", "月給27万円", "勤務時間", "休日", "求人担当者", "資格手当あり。"].every(x => t.includes(x)); })()`));
   ok("全文は改行を保ったまま表示し、コピーできる", await evaluate(`__q(".jp-body").textContent.split("\\n").length === 5 && !!__btn("全文をコピー")`));
   ok("公開状態の履歴：変更前→変更後・日付・理由・操作者・公開期間", await evaluate(`(() => { const t = __section("公開状態の履歴").innerText; return t.includes("未設定 → 公開中") && t.includes("公開中 → 非公開") && t.includes("非公開 → 公開中") && t.includes("理由：検証：採用予定数に達した") && t.includes("preview@web") && t.includes("公開期間"); })()`));
