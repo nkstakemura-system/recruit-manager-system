@@ -1,0 +1,131 @@
+/* 求人一覧・求人詳細（第5弾）。求人分析（marketing.css）と同じ紺・赤・左寄せ。PCはコンパクトな一覧、スマホはカード表示 */
+.jp-page { font-size: 14px; }
+.jp-top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 10px; }
+.jp-unset { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 10px; font-size: 14px; }
+.jp-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; margin-bottom: 10px; }
+.jp-tabs { flex: 1 1 420px; margin-bottom: 0; }
+.jp-tab-unset { color: #7a4a00; }
+.jp-tab-unset .jm-dot { background: #fff4e0; color: #7a4a00; }
+.jp-media { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: var(--nks-muted); white-space: nowrap; }
+.jp-media select { height: 36px; min-width: 160px; }
+.jp-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.jp-req { margin-left: 6px; font-size: 11px; font-weight: 700; color: var(--nks-red); }
+.jp-hint { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--nks-muted); }
+.jp-mini { height: 20px; font-size: 11px; padding: 0 6px; }
+
+/* 一覧（PC：1行1求人の表） */
+.jp-list { background: #fff; border: 1px solid var(--nks-border); border-radius: 12px; overflow: hidden; }
+.jp-row { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 1.2fr) 84px 84px minmax(0, 2fr) 72px; gap: 10px; align-items: center; padding: 9px 14px; border-top: 1px solid #e6ebf2; }
+.jp-row:first-child { border-top: 0; }
+.jp-head { background: #f7f9fc; font-size: 12px; font-weight: 700; color: var(--nks-muted); padding-top: 7px; padding-bottom: 7px; }
+.jp-head .jp-num { display: inline-flex; justify-content: center; align-items: center; }
+.jp-title { min-width: 0; display: grid; gap: 2px; }
+.jp-title-link { color: var(--nks-navy); font-weight: 700; font-size: 15px; text-decoration: none; overflow-wrap: anywhere; }
+.jp-title-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.jp-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; color: var(--nks-muted); }
+.jp-media-cell { display: grid; gap: 2px; font-weight: 700; color: var(--nks-ink); min-width: 0; }
+.jp-id { font-size: 11px; font-weight: 400; color: var(--nks-muted); overflow-wrap: anywhere; }
+.jp-num { text-align: center; }
+.jp-count { min-width: 44px; height: 32px; padding: 0 10px; border: 1px solid var(--nks-border); border-radius: 8px; background: #fff; color: var(--nks-navy); font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.jp-count:hover { border-color: var(--nks-navy); background: #f2f6fb; }
+.jp-count.is-zero { display: inline-block; border-color: transparent; background: none; color: #9aa4b2; text-decoration: none; cursor: default; line-height: 32px; }
+.jp-vis-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.jp-vis { display: inline-flex; align-items: center; height: 24px; padding: 0 9px; border-radius: 6px; font-size: 13px; font-weight: 700; white-space: nowrap; }
+.jp-vis.is-public { background: var(--nks-navy); color: #fff; }
+.jp-vis.is-private { background: #e3e6eb; color: #3b4656; }
+.jp-vis.is-unset { background: #fff4e0; color: #7a4a00; }
+.jp-since { font-size: 12px; color: var(--nks-muted); }
+.jp-detail-cell { text-align: right; }
+.jp-empty { margin: 0; padding: 18px 14px; color: var(--nks-muted); }
+
+/* 応募者モーダル */
+.jp-people td, .jp-people th { text-align: left !important; }
+.jp-name { font-size: 14px; }
+.jp-people .jp-mini { margin-left: 6px; }
+.jp-sel { font-weight: 700; color: var(--nks-ink); }
+.jp-sel.is-hired { color: var(--nks-navy); background: #eef2f8; border-radius: 4px; padding: 1px 6px; }
+
+/* ダイアログ */
+.jp-body-input { width: 100%; min-height: 180px; font-size: 14px; line-height: 1.7; padding: 8px 10px; border: 1px solid var(--nks-border); border-radius: 8px; resize: vertical; font-family: inherit; }
+.jp-fold { margin-top: 10px; }
+.jp-fold > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--nks-navy); padding: 4px 0; }
+.jp-vis-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 10px; }
+.jp-vis-pick .jm-field-label { margin: 0; }
+.jp-inline-date { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; }
+.jp-inline-date input { width: 170px; }
+
+/* 求人詳細 */
+.jp-back { display: inline-block; margin-bottom: 8px; border: 1px solid var(--nks-border); border-radius: 8px; background: #fff; color: var(--nks-navy); font-size: 14px; font-weight: 700; padding: 6px 14px; cursor: pointer; text-decoration: none; }
+.jp-detail-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; align-items: start; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--nks-border); }
+.jp-detail-title { min-width: 0; display: grid; gap: 6px; }
+.jp-detail-title .jm-h2 { overflow-wrap: anywhere; }
+.jp-ver { font-size: 12px; font-weight: 700; color: var(--nks-muted); }
+.jp-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-start; }
+.jp-btn-link { display: inline-flex; align-items: center; text-decoration: none; }
+.jp-detail-counts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 13px; font-weight: 700; color: var(--nks-muted); }
+.jp-section { margin-bottom: 12px; }
+.jp-h3 { font-size: 16px; margin: 0 0 10px; color: var(--nks-navy); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.jp-h3-btn { margin-left: auto; }
+.jp-fold-section > summary { cursor: pointer; list-style: none; }
+.jp-fold-section > summary::-webkit-details-marker { display: none; }
+.jp-fold-section > summary .jp-h3 { margin: 0; }
+.jp-fold-section > summary .jp-h3::before { content: "▸"; font-size: 12px; color: var(--nks-muted); }
+.jp-fold-section[open] > summary .jp-h3::before { content: "▾"; }
+.jp-fold-section[open] > summary { margin-bottom: 10px; }
+.jp-facts { display: grid; grid-template-columns: 9em minmax(0, 1fr); gap: 6px 14px; margin: 0 0 6px; font-size: 14px; }
+.jp-facts dt { color: var(--nks-muted); font-weight: 700; font-size: 13px; }
+.jp-facts dd { margin: 0; overflow-wrap: anywhere; }
+.jp-url { color: var(--nks-navy); overflow-wrap: anywhere; }
+.jp-fulltext-actions { margin: 4px 0; }
+.jp-body { max-height: 420px; overflow: auto; font-size: 14px; }
+.jp-periods { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--nks-muted); }
+.jp-timeline { list-style: none; margin: 0; padding: 0; }
+.jp-timeline li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 7px 0; border-top: 1px solid #edf0f5; font-size: 14px; }
+.jp-timeline li:first-child { border-top: 0; }
+.jp-timeline li.is-voided { opacity: .55; }
+.jp-timeline b { font-variant-numeric: tabular-nums; color: var(--nks-navy); min-width: 6.5em; }
+.jp-scope { font-size: 12px; font-weight: 700; color: var(--nks-muted); }
+.jp-reason { flex-basis: 100%; font-size: 13px; color: var(--nks-ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.jp-timeline .jm-meta { margin: 0; }
+.jp-revisions { list-style: none; margin: 0; padding: 0; }
+.jp-revisions > li { padding: 10px 0; border-top: 1px solid #edf0f5; }
+.jp-revisions > li:first-child { border-top: 0; padding-top: 0; }
+.jp-rev-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 14px; }
+.jp-rev-head b { color: var(--nks-navy); }
+.jp-rev-note { margin: 4px 0 6px; font-size: 13px; }
+.jp-diff td, .jp-diff th { text-align: left !important; white-space: pre-wrap !important; vertical-align: top; overflow-wrap: anywhere; max-width: 420px; }
+.jp-before { color: #6b7686; text-decoration: line-through; text-decoration-color: #c7ced8; }
+.jp-after { color: var(--nks-ink); font-weight: 700; }
+.jp-none { color: #9aa4b2; font-weight: 400; text-decoration: none; }
+.jp-row-muted td { color: #9aa4b2; }
+
+/* 応募者の登録・編集（App.jsx の応募経路） */
+.nks-posting-picker { display: grid; gap: 2px; }
+.nks-posting-link { font-size: 13px; }
+.nks-posting-link a { color: var(--nks-navy); font-weight: 700; }
+.nks-posting-history { margin-top: 8px; font-size: 13px; }
+.nks-posting-history summary { cursor: pointer; color: var(--nks-navy); font-weight: 700; }
+.nks-posting-history ul { margin: 6px 0 0; padding-left: 18px; color: var(--nks-muted); }
+
+/* スマホ：カード表示 */
+@media (max-width: 760px) {
+  .jp-head { display: none; }
+  .jp-row { grid-template-columns: 1fr 1fr; grid-template-areas: "title title" "media media" "apply hire" "vis vis" "detail detail"; gap: 8px 10px; padding: 12px 14px; }
+  .jp-title { grid-area: title; }
+  .jp-media-cell { grid-area: media; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+  .jp-row > .jp-num:nth-child(3) { grid-area: apply; }
+  .jp-row > .jp-num:nth-child(4) { grid-area: hire; }
+  .jp-vis-cell { grid-area: vis; }
+  .jp-detail-cell { grid-area: detail; text-align: left; }
+  .jp-detail-cell .jm-btn { width: 100%; height: 38px; }
+  .jp-row > .jp-num { display: flex; align-items: center; justify-content: flex-start; gap: 8px; text-align: left; }
+  .jp-row > .jp-num::before, .jp-media-cell::before { content: attr(data-label); font-size: 12px; font-weight: 700; color: var(--nks-muted); }
+  .jp-media-cell::before { margin-right: 4px; }
+  .jp-media { width: 100%; }
+  .jp-media select { flex: 1; }
+  .jp-detail-head { grid-template-columns: 1fr; }
+  .jp-detail-actions .jm-btn { flex: 1 1 auto; }
+  .jp-facts { grid-template-columns: 1fr; gap: 2px; }
+  .jp-facts dd { margin-bottom: 6px; }
+  .jp-h3-btn { margin-left: 0; }
+}

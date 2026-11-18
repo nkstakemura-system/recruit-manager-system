@@ -15,6 +15,10 @@ import SelectionModal from "./selection/SelectionModal";
 import SelectionTimeline from "./selection/SelectionTimeline";
 import Dashboard from "./dashboard/PeriodDashboard";
 import JobMarketing from "./marketing/JobMarketing";
+import JobPostings from "./postings/JobPostings";
+import JobPostingDetail from "./postings/JobPostingDetail";
+import PostingPicker, { usePostingOptions } from "./postings/PostingPicker";
+import { postingsApi } from "./postings/postingsApi";
 import { selectionApi, mirrorForForm, SELECTION_OWNED_FIELDS } from "./selection/selectionApi";
 import ContactModal from "./contact/ContactModal";
 import "./contact/contact.css";
@@ -469,7 +473,7 @@ const EmploymentFields = ({ value, onChange }) => (
     </label>
   </div>
 );
-const SourceTypeFields = ({ value, onChange }) => (
+const SourceTypeFields = ({ value, onChange, picker }) => (
   <section className="nks-source-fields">
     <label style={s.lbl}>応募経路の種別</label>
     <div className="nks-choice-group">
@@ -481,7 +485,8 @@ const SourceTypeFields = ({ value, onChange }) => (
         </label>
       ))}
     </div>
-    {value.source_type && (
+    {value.source_type === "求人" && picker && <div style={{ marginTop: "12px" }}>{picker}</div>}
+    {value.source_type && !(value.source_type === "求人" && picker) && (
       <label style={{ ...s.lbl, marginTop: "12px" }}>
         {sourceDetailLabel(value.source_type)}
         <input type="text" name="agent_name" value={value.agent_name || ""}
@@ -509,6 +514,12 @@ const CandidateDetail = () => {
   );
   const [showRetireInput, setShowRetireInput] = useState(false);
   const [editingSource, setEditingSource] = useState(false);
+  // 求人のひも付け（第5弾）。postingLink: 保存済みの現在のひも付け、postingChoice: 画面で選択中の求人
+  const postingOptions = usePostingOptions();
+  const [postingLink, setPostingLink] = useState({ ready: false, error: false, link_id: null, current: null, history: [] });
+  const [postingChoice, setPostingChoice] = useState("");
+  // 求人一覧・求人詳細から開いた場合の戻り先（絞り込みの状態を含む）
+  const returnTo = typeof location.state?.from === "string" && location.state.from.startsWith("/jobs") ? location.state.from : null;
 
   // フォームデータ
   const [f, setF] = useState({});
@@ -574,6 +585,12 @@ const CandidateDetail = () => {
 
   const candIsCoop = cand?.is_coop === true;
   const candLoaded = cand != null;
+  const loadPostingLink = useCallback(() => postingsApi.candidateLink(id).then(res => {
+    if (!res.ok || !res.data?.ready) { setPostingLink({ ready: false, error: res.ok ? false : true, link_id: null, current: null, history: [] }); return; }
+    setPostingLink({ ...res.data, error: false });
+    setPostingChoice(res.data.current?.id || "");
+  }).catch(() => setPostingLink({ ready: false, error: true, link_id: null, current: null, history: [] })), [id]);
+  useEffect(() => { if (candLoaded && !candIsCoop) loadPostingLink(); }, [candLoaded, candIsCoop, loadPostingLink]);
   useEffect(() => {
     if (!candLoaded || candIsCoop) return;
     let active = true;
@@ -713,6 +730,18 @@ const CandidateDetail = () => {
       delete payload.tel;
       delete payload.email;
       delete payload.primary_contact;
+      // 求人のひも付けは、変更したときだけ送る（送らなければ現在のひも付けを保持する）。
+      // 応募経路の種別を「求人」以外に変えた場合は、ひも付けを外す（履歴は残る）
+      delete payload.job_posting;
+      // 協力業者へ変更する場合も、ひも付けを外す（保存後にひも付けが残る保存はサーバーが409で止める）
+      if (postingLink.ready && !isCoopRecord) {
+        const desired = !payload.is_coop && payload.source_type === "求人" ? (postingChoice || null) : null;
+        const saved = postingLink.current?.id || null;
+        if (desired !== saved) payload.job_posting = {
+          posting_id: desired, expected_link_id: postingLink.link_id,
+          reason: saved && payload.is_coop ? "協力業者に変更" : saved && payload.source_type !== "求人" ? "応募経路の種別を変更" : null,
+        };
+      }
       const res = await apiFetch(`/api/candidates/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -722,6 +751,7 @@ const CandidateDetail = () => {
         alert("データを保存・更新しました");
         setShowRetireInput(false);
         setEditingSource(false);
+        if (payload.job_posting) loadPostingLink();
         // 保存後に元データの状態も更新（二重計上防止）。管理種別の変更も反映し、
         // 次回の保存で送る項目と、個人応募の選考情報の読み込みを変更後の種別に合わせる
         setCand((previous) => ({
@@ -798,10 +828,10 @@ const CandidateDetail = () => {
         >
           <div style={{ paddingBottom: "10px" }}>
             <button
-              onClick={() => navigate("/candidates")}
+              onClick={() => navigate(returnTo || "/candidates", returnTo && typeof location.state?.listFrom === "string" ? { state: { from: location.state.listFrom } } : undefined)}
               style={{ ...s.actBtn, padding: "8px 16px", fontSize: "14px" }}
             >
-              ← 一覧へ戻る
+              {returnTo ? `← ${location.state?.fromLabel || "求人一覧へ戻る"}` : "← 一覧へ戻る"}
             </button>
           </div>
           <div style={{ display: "flex" }}>
@@ -1148,6 +1178,7 @@ const CandidateDetail = () => {
                     <button type="button" style={s.actBtn} onClick={() => {
                       if (editingSource) {
                         setF(previous => ({ ...previous, source_type: cand?.source_type || "", agent_name: cand?.agent_name || "", introducer_fee: cand?.introducer_fee || "" }));
+                        setPostingChoice(postingLink.current?.id || "");
                       }
                       setEditingSource(current => !current);
                     }}>
@@ -1156,14 +1187,34 @@ const CandidateDetail = () => {
                   </div>
                   {editingSource ? (
                     <>
-                      <SourceTypeFields value={f} onChange={hChg} />
+                      <SourceTypeFields value={f} onChange={hChg} picker={!isCoop && postingOptions.loaded ? (
+                        <PostingPicker agentName={f.agent_name} options={{ ...postingOptions, ready: postingOptions.ready && postingLink.ready, linkError: postingOptions.ready && postingLink.error }} postingId={postingChoice}
+                          onMediaChange={value => setF(previous => ({ ...previous, agent_name: value }))} onPostingChange={setPostingChoice}
+                          labelStyle={{ ...s.lbl, display: "block", marginBottom: "10px" }} inputStyle={{ ...s.inp, marginTop: "6px" }} />
+                      ) : null} />
+                      {postingLink.ready && postingLink.current && f.source_type !== "求人" && (
+                        <div className="nks-inline-note">応募経路の種別を「求人」以外にすると、求人「{postingLink.current.title}」とのひも付けを外します（履歴は残ります）。</div>
+                      )}
                       <div className="nks-inline-note">変更後は画面下部の保存ボタンで確定してください。</div>
                     </>
                   ) : (
                     <div className="nks-static-value">
                       <strong>{f.source_type || "未設定"}</strong>
                       {f.agent_name && <span>{f.agent_name}</span>}
+                      {postingLink.ready && postingLink.current && (
+                        <span className="nks-posting-link">求人：<Link to={`/jobs/${postingLink.current.id}`}>{postingLink.current.title}</Link></span>
+                      )}
                     </div>
+                  )}
+                  {postingLink.ready && postingLink.history.length > 0 && (
+                    <details className="nks-posting-history">
+                      <summary>求人の選択の履歴（{postingLink.history.length}件）</summary>
+                      <ul>
+                        {postingLink.history.map(h => (
+                          <li key={h.id}>{h.created_at}：{h.previous ? h.previous.title : "未選択"} → {h.posting ? h.posting.title : "該当求人なし・不明"}{h.reason ? `（${h.reason}）` : ""}{h.actor ? `・${h.actor}` : ""}</li>
+                        ))}
+                      </ul>
+                    </details>
                   )}
                 </section>
                 <div style={s.flexRow}>
@@ -3174,6 +3225,9 @@ const RegistrationForm = () => {
 
   const hChg = (e) => setF({ ...f, [e.target.name]: e.target.value });
   const curr = new Date().getFullYear();
+  // 求人の選択（第5弾。任意）。応募者の登録と同じトランザクションで保存する
+  const postingOptions = usePostingOptions();
+  const [postingChoice, setPostingChoice] = useState("");
 
   const hAge = (e) => {
     const v = forceHalfWidthNumber(e.target.value);
@@ -3228,10 +3282,17 @@ const RegistrationForm = () => {
           name_kana: finalNameKana, // 決定した値を送る
           status: initialStatus,
           ...contactValues,
+          ...(!f.is_coop && f.source_type === "求人" && postingChoice && postingOptions.ready ? { job_posting: { posting_id: postingChoice } } : {}),
         }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        alert(data?.error || "登録できませんでした");
+        return;
+      }
       if (res.ok) {
         alert("完了");
+        setPostingChoice("");
         setF({
           is_coop: false,
           is_solo: false,
@@ -3386,7 +3447,11 @@ const RegistrationForm = () => {
                   ))}
                 </div>
               </div>
-              <SourceTypeFields value={f} onChange={hChg} />
+              <SourceTypeFields value={f} onChange={hChg} picker={postingOptions.loaded ? (
+                <PostingPicker agentName={f.agent_name} options={postingOptions} postingId={postingChoice}
+                  onMediaChange={value => setF(previous => ({ ...previous, agent_name: value }))} onPostingChange={setPostingChoice}
+                  labelStyle={{ ...s.lbl, display: "block", marginBottom: "10px" }} inputStyle={{ ...s.inp, marginTop: "6px" }} />
+              ) : null} />
             </>
           ) : (
             /* 協力業者の場合 */
@@ -4016,6 +4081,14 @@ const IcoFunnel = () => (
   </svg>
 );
 
+// --- 求人一覧アイコン（第5弾） ---
+const IcoJobs = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="7" width="18" height="13" rx="2" />
+    <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18" />
+  </svg>
+);
+
 // --- サイドバー ---
 const Sidebar = () => {
   const [open, setOpen] = useState(false);
@@ -4076,6 +4149,7 @@ const Sidebar = () => {
       <Nav to="/expenses" l="採用経費" ic={<IcoMoney />} />
       {/* ★ ここに追加！ */}
       <Nav to="/stats" l="統計ダッシュボード" ic={<IcoChart />} />
+      <Nav to="/jobs" l="求人一覧" ic={<IcoJobs />} />
       <Nav to="/job-marketing" l="求人分析" ic={<IcoFunnel />} />
     </nav>
   );
@@ -4093,6 +4167,8 @@ function ManagementApp() {
           <Route path="/candidates/:id" element={<CandidateDetail />} />
           <Route path="/expenses" element={<ExpensePage />} />
           <Route path="/stats" element={<RecruitmentStats />} />
+          <Route path="/jobs" element={<JobPostings />} />
+          <Route path="/jobs/:id" element={<JobPostingDetail />} />
           <Route path="/job-marketing" element={<JobMarketing />} />
         </Routes>
       </div>

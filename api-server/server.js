@@ -9,6 +9,8 @@ const { buildFacts } = require("./dashboardFacts");
 const contacts = require("./contactService");
 const marketing = require("./jobMarketingService");
 const { createPgMarketingStore } = require("./jobMarketingPgStore");
+const jobPostings = require("./jobPostingService");
+const { createPgJobPostingStore } = require("./jobPostingPgStore");
 require("dotenv").config();
 
 const app = express();
@@ -21,6 +23,7 @@ const optionalText = value => typeof value === "string" && value.trim() ? value.
 const selectionStore = createPgSelectionStore(db);
 const contactStore = contacts.createPgContactStore(db);
 const marketingStore = createPgMarketingStore(db);
+const postingStore = createPgJobPostingStore(db, marketingStore);
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 // 個人応募の選考列は、選考履歴テーブルが存在する間（$69）は選考履歴APIだけが更新する。
 // 送られなかった選考列は保持する（$70〜$77 は各列が送られたかどうか）。
@@ -181,8 +184,17 @@ app.post("/api/candidates", async (req, res) => {
     employment_type,
   } = req.body;
 
+  // 求人の選択（任意）がある場合は、応募者の登録と同じトランザクションで保存する（片方だけ成功する状態にしない）。
+  // 選択が無い場合は従来どおり1文で登録する
+  const link = req.body.job_posting;
+  const wantsLink = Boolean(link) && typeof link === "object" && link.posting_id != null && link.posting_id !== "";
+  let client;
   try {
-    const result = await db.query(
+    if (wantsLink) {
+      client = await db.connect();
+      await client.query("BEGIN");
+    }
+    const result = await (client || db).query(
       `INSERT INTO candidates (
         name_kanji, name_kana, age, birth_year, experience, 
         tel, email, status, primary_contact, applied_at,
@@ -216,10 +228,21 @@ app.post("/api/candidates", async (req, res) => {
         offerDate,
       ],
     );
+    if (wantsLink) {
+      if (!(await postingStore.ready(client))) throw Object.assign(new Error(jobPostings.UNAVAILABLE_MESSAGE), { status: 503, code: "postings_unavailable" });
+      const created = result.rows[0];
+      await jobPostings.applyLink(postingStore.tx(client), { id: String(created.id), is_coop: created.is_coop === true, source_type: created.source_type ?? null },
+        { posting_id: link.posting_id, expected_link_id: null, reason: link.reason }, selectionActor(req));
+      await client.query("COMMIT");
+    }
     res.json(result.rows[0]);
   } catch (err) {
+    if (client) try { await client.query("ROLLBACK"); } catch { /* 接続断時は元のエラーを優先 */ }
+    if (err.status) return res.status(err.status).json({ error: err.message, code: err.code });
     console.error("Database operation failed");
     res.status(500).send("Server Error");
+  } finally {
+    client?.release();
   }
 });
 
@@ -259,6 +282,15 @@ app.put("/api/candidates/:id", async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(409).json({ error: conflict.message, code: conflict.code });
     }
+    // 求人のひも付け（新しい画面だけが送る。送られなければ現在のひも付けを保持する＝古い画面の保存で消えない）
+    // 保存後の値（source_type は UPDATE の $57 と同じく、送られなければ NULL になる）
+    const nextCandidate = { id: String(req.params.id), is_coop: Boolean(isCoop), source_type: b.source_type || null };
+    if (current && hasOwn(b, "job_posting")) {
+      if (!(await postingStore.ready(client))) throw Object.assign(new Error(jobPostings.UNAVAILABLE_MESSAGE), { status: 503, code: "postings_unavailable" });
+      await jobPostings.applyLink(postingStore.tx(client), nextCandidate, b.job_posting, selectionActor(req));
+    }
+    // 協力業者・求人以外の応募経路になるのに、求人へのひも付けが残る保存は行わない（409）
+    if (current && (await postingStore.ready(client))) await jobPostings.assertLinkConsistent(postingStore.tx(client), nextCandidate);
     await client.query(
       `UPDATE candidates SET
         name_kanji=$1, name_kana=$2, age=$3, birth_year=$4, tel=COALESCE($5, tel), email=COALESCE($6, email),
@@ -354,6 +386,8 @@ app.put("/api/candidates/:id", async (req, res) => {
     res.json({ message: "更新完了" });
   } catch (err) {
     if (client) try { await client.query("ROLLBACK"); } catch { /* 接続断時は元のエラーを優先 */ }
+    if (err.status) return res.status(err.status).json({ error: err.message, code: err.code });
+    if (err.code === "23505") return res.status(409).json({ error: "他の画面と同時に保存されたため保存できませんでした。画面を読み込み直してください", code: "link_stale" });
     console.error("Database operation failed");
     res.status(500).send("Server Error");
   } finally {
@@ -418,6 +452,26 @@ app.post("/api/job-marketing/imports", marketingRoute(req => marketing.importCsv
 app.post("/api/job-marketing/references", marketingRoute(req => marketing.createReference(marketingStore, req.body, selectionActor(req))));
 app.put("/api/job-marketing/references/:id", marketingRoute(req => marketing.updateReference(marketingStore, req.params.id, req.body, selectionActor(req))));
 app.delete("/api/job-marketing/references/:id", marketingRoute(req => marketing.deleteReference(marketingStore, req.params.id, selectionActor(req))));
+
+// --- 求人一覧 API（第5弾。テーブル未作成時は ready:false / 503）。氏名を返すのは応募者モーダルの API だけ ---
+const postingRoute = handler => async (req, res) => {
+  try {
+    res.json(await handler(req));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message, code: err.code, fields: err.fields, posting_id: err.posting_id });
+    // 一意制約（版番号・切替の連番・ひも付けの連番）の衝突＝同時操作。最新を読み込み直してもらう
+    if (err.code === "23505") return res.status(409).json({ error: "他の操作と同時に保存されたため保存できませんでした。画面を読み込み直してください", code: "stale" });
+    console.error("Job posting operation failed");
+    res.status(500).json({ error: "求人のデータを保存できませんでした" });
+  }
+};
+app.get("/api/job-postings", postingRoute(() => jobPostings.overview(postingStore)));
+app.post("/api/job-postings", postingRoute(req => jobPostings.createPosting(postingStore, req.body, selectionActor(req))));
+app.get("/api/job-postings/:id", postingRoute(req => jobPostings.detail(postingStore, req.params.id)));
+app.get("/api/job-postings/:id/candidates", postingRoute(req => jobPostings.candidates(postingStore, req.params.id, req.query.kind)));
+app.post("/api/job-postings/:id/revisions", postingRoute(req => jobPostings.addRevision(postingStore, req.params.id, req.body, selectionActor(req))));
+app.post("/api/job-postings/:id/visibility", postingRoute(req => jobPostings.setVisibility(postingStore, req.params.id, req.body, selectionActor(req))));
+app.get("/api/candidates/:id/job-posting", postingRoute(req => jobPostings.candidateLink(postingStore, req.params.id)));
 
 // 論理削除（非表示）
 app.delete("/api/candidates/:id", async (req, res) => {

@@ -194,11 +194,16 @@ try {
   // 3. 電気工事士9月：月間合計しかない月の途中切替は「内訳不明」（按分しない）
   await evaluate(`__tab("電気工事士")`);
   await evaluate(`__set(__q(".jm-month select"), "2026-09")`);
-  await waitFor(`__card("無料／有料掲載の比較").innerText.includes("内訳不明")`, "split unknown");
+  await waitFor(`__q(".jm-plan-row").innerText.includes("月の途中で掲載方法を変更")`, "sep plan row");
+  ok("月の途中の切替は月次でも明示", true);
+  // 第5弾の表示条件：9月までの直近12か月は無料（8月）と内訳不明（9月）だけで、有料の実績が無いため比較エリアは表示しない
+  ok("無料／有料比較：有料の実績が無い期間（9月まで）は表示しない", await evaluate(`!__card("無料／有料掲載の比較")`));
+  // 10月までなら無料（8月）・有料（10月）の両方があり表示する。9月の月間合計は「内訳不明」として按分しない
+  await evaluate(`__set(__q(".jm-month select"), "2026-10")`);
+  await waitFor(`!!__card("無料／有料掲載の比較") && __card("無料／有料掲載の比較").innerText.includes("内訳不明")`, "split unknown");
   const elec = await evaluate(`__card("無料／有料掲載の比較").innerText.replace(/\\s+/g, " ")`);
   ok("月間合計しかない9月は「掲載方法別の内訳不明」", elec.includes("掲載方法別の内訳不明：2026/9/1〜2026/9/30"));
   ok("内訳不明の9月を無料にも有料にも計上しない", /無料掲載.*2026\/8\/1〜2026\/8\/31/.test(elec) && !/無料掲載[^有]*9\/30/.test(elec));
-  ok("月の途中の切替は月次でも明示", await evaluate(`__q(".jm-plan-row").innerText.includes("月の途中で掲載方法を変更")`));
   await shot("02-electric-sep-split-unknown", true);
 
   // 4. 掲載状態：無料→有料→無料（CADオペ（本社））

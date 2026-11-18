@@ -267,8 +267,9 @@ export function CategoryManager({ categories, onClose, onSaved }) {
 const planOptions = Object.entries(PLAN_STATUS);
 
 // 掲載状態の変更（例：無料→有料）。入力 → 確認 → 登録。変更前の実績はそのまま残る
-export function PlanDialog({ category, postings = [], current, today, onClose, onSaved }) {
-  const [form, setForm] = useState({ posting_id: "", status: current?.status === "free" ? "paid" : "", effective_date: "", budget: "", note: "" });
+// initialPostingId: 求人詳細（第5弾）から開いたときの対象の求人原稿（未指定は職種全体）
+export function PlanDialog({ category, postings = [], current, today, onClose, onSaved, initialPostingId = "" }) {
+  const [form, setForm] = useState({ posting_id: initialPostingId, status: current?.status === "free" ? "paid" : "", effective_date: "", budget: "", note: "" });
   const [step, setStep] = useState("input");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);

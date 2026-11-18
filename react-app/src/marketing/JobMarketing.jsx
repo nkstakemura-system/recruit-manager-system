@@ -5,7 +5,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   DEFAULT_MEDIA, JOBS_REPORT, METRICS, METRIC_LABELS, PLAN_STATUS, RATE_LABELS, THRESHOLDS, analyze, comparability, fmtCount, fmtRate, fmtYen,
-  isFullMonth, monthAggregate, monthDeltas, monthLabel, monthRange, monthlySeries, periodLabel, planResolver, planSplit, rangesLabel, rates, safeUrl,
+  isFullMonth, monthAggregate, monthDeltas, monthLabel, monthRange, monthlySeries, periodLabel, planCompareVisible, planResolver, planSplit, rangesLabel, rates, safeUrl,
   shiftMonth, slashDate, sumDaily, summaryText, todayTokyo, unitCost,
 } from "../../../shared/jobMarketing.mjs";
 import { marketingApi, errorText, planLabel, postingLabel, sourceLabel, statusLabel } from "./marketingApi";
@@ -236,7 +236,8 @@ export default function JobMarketing() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [month, setMonth] = useState(null);
-  const [categoryId, setCategoryId] = useState(null);
+  // 求人詳細（第5弾）の「求人分析で見る」から開いた場合は、その職種を最初に表示する（?category=職種ID）
+  const [categoryId, setCategoryId] = useState(() => new URLSearchParams(window.location.search).get("category"));
   const [dialog, setDialog] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -416,10 +417,13 @@ export default function JobMarketing() {
           )}
           {cur.status !== "empty" && <PostingBreakdown agg={cur} active={active} postings={postings} />}
 
-          <section className="jm-card">
-            <h3>無料／有料掲載の比較<span className="jm-h3-sub">直近12か月</span></h3>
-            <PlanCompare plans={view.plans} budget={lastPaid?.budget ?? null} events={categoryEvents} />
-          </section>
+          {/* 無料・有料の両方に実績がある場合だけ表示する（片方だけ・不明だけの場合は表示しない） */}
+          {planCompareVisible(view.plans) && (
+            <section className="jm-card">
+              <h3>無料／有料掲載の比較<span className="jm-h3-sub">直近12か月</span></h3>
+              <PlanCompare plans={view.plans} budget={lastPaid?.budget ?? null} events={categoryEvents} />
+            </section>
+          )}
 
           <section className="jm-card jm-month-card">
             <div className="jm-month-sum">

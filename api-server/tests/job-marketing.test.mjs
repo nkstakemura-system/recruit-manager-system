@@ -1173,3 +1173,27 @@ test("Codex review (O-04): postings of the same CSV that are not registered yet 
   assert.equal(resB.ids.length, 1);
   assert.deepEqual([(await monthTotals(store, sales, "2026-10")).totals.impressions, (await monthTotals(store, elec, "2026-10")).totals.impressions], [52, 103]);
 });
+
+test("free/paid comparison area is shown only when both free and paid have measured results (display condition only)", () => {
+  const split = (records, events = []) => jm.planSplit(records, { categoryId: "1", start: "2026-01-01", end: "2026-10-31", planAt: jm.planResolver(events) });
+  const month = (id, m, plan, extra = {}) => rec(id, { period_start: `2026-${m}-01`, period_end: jm.monthRange(`2026-${m}`).end, impressions: 300, clicks: 20, plan_type: plan, ...extra });
+  // 無料だけ・有料だけ・掲載種別が不明だけ：表示しない
+  assert.equal(jm.planCompareVisible(split([month(1, "08", "free"), month(2, "09", "free")])), false);
+  assert.equal(jm.planCompareVisible(split([month(1, "09", "paid")])), false);
+  const unknownOnly = split([month(1, "09", "unknown")]);
+  assert.equal(jm.planCompareVisible(unknownOnly), false);
+  assert.ok(unknownOnly.unknown, "unknown results are still aggregated (only the area is hidden)");
+  assert.equal(jm.planCompareVisible(split([])), false);
+  // 両方あり：表示（比較できる）
+  const both = split([month(1, "08", "free"), month(2, "09", "paid")]);
+  assert.equal(jm.planCompareVisible(both), true);
+  assert.equal(both.comparable, true);
+  // 両方あるが有料が7日未満：表示し、従来どおり「比較データ不足」
+  const short = split([month(1, "08", "free"), rec(2, { period_start: "2026-10-01", period_end: "2026-10-03", impressions: 30, clicks: 2, plan_type: "paid" })]);
+  assert.equal(jm.planCompareVisible(short), true);
+  assert.equal(short.comparable, false);
+  assert.ok(short.reasons.some(x => x.includes("有料掲載の実績が3日分")));
+  // 両方の記録はあるが、片方に表示回数・クリック数が無い：比較できる実績ではないため表示しない
+  assert.equal(jm.planCompareVisible(split([month(1, "08", "free"), month(2, "09", "paid", { impressions: null, clicks: null })])), false);
+  assert.equal(jm.planCompareVisible(null), false);
+});

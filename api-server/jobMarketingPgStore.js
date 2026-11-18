@@ -190,7 +190,8 @@ function createPgMarketingStore(db) {
     }
   }
 
-  return { ready, transaction };
+  // tx: 求人一覧（第5弾）が同じ接続・同じトランザクション内で求人分析の表を読むために公開する
+  return { ready, transaction, tx };
 }
 
 module.exports = { createPgMarketingStore, TABLES };

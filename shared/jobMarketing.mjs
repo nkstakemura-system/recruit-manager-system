@@ -434,6 +434,14 @@ export function monthDeltas(cur, prev) {
 // * 日別データは日ごとの掲載状態（履歴）で分ける。
 // * 月間合計など日別でない記録は、期間中に掲載状態が変わっていれば「内訳不明」とし、日数で按分しない。
 // * 同じ日・同じ原稿の記録が重なる場合は二重計上を避けるため比較から除く。範囲をまたぐ日別でない記録も除く。
+// 無料／有料比較エリアを表示するか（表示条件のみ。集計・比較データ不足の判定は planSplit のまま）。
+// 無料掲載と有料掲載の両方に、表示回数またはクリック数の実績がある場合だけ表示する。
+// 無料だけ・有料だけ・掲載種別が不明だけの場合は表示しない。両方あるが日数不足などの場合は、表示して「比較データ不足」を示す。
+export function planCompareVisible(plans) {
+  const has = g => Boolean(g) && (g.totals?.impressions != null || g.totals?.clicks != null);
+  return has(plans?.free) && has(plans?.paid);
+}
+
 export function planSplit(records, { categoryId, media = DEFAULT_MEDIA, start, end, planAt }) {
   const parts = [];
   for (const r of records) {

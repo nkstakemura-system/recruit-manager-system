@@ -35,6 +35,22 @@ node tools/preview/verify-marketing.mjs <保存先フォルダ> http://127.0.0.1
 
 DB適用は `api-server/migrations/004_job_marketing.sql`（本番未適用）。
 
+## 求人一覧・求人詳細・応募者連携（第5弾）
+
+- サイドバーの「求人一覧」（/jobs、「求人分析」の上）。起動時に架空の求人5件を登録します（求人分析の実績は追加しません）。
+  - CSV由来を想定した求人2件（求人原稿のみ・初版未登録・公開状態は未設定＝要設定）
+  - ハローワーク（公開中・2版）、Indeed（公開→非公開）、AirWORK（求人IDなし＝NKS採番）
+  - 求人経路の架空応募者の一部だけを求人にひも付け（実データでは自動でひも付けません）
+- `--no-postings-table` で、求人一覧テーブル未作成（migration 005 未適用）の状態を確認できます。
+- 画面検証（一覧・公開／非公開・要設定・媒体の絞り込み・応募者数／採用数のモーダル・応募者詳細への移動と戻り・求人詳細・修正履歴・古い画面からの保存・掲載状態の共有・初版登録・新規登録・応募者フォームの媒体→求人の選択・採用数の判定・スマートフォン幅・テーブル未作成時）。
+  起動直後の、基準日を固定したプレビューに対して実行します（3つ目のURLは `--no-postings-table` で起動したプレビュー。省略可）:
+
+```
+node tools/preview/verify-postings.mjs <保存先フォルダ> http://127.0.0.1:5188 http://127.0.0.1:5189
+```
+
+DB適用は `api-server/migrations/005_job_postings.sql`（本番未適用）。手順は `tools/sql/RUNBOOK_job_postings_migration.md`。
+
 ### 実CSVの確認（ローカルのみ）
 
 ```
@@ -69,7 +85,7 @@ $env:PREVIEW_NOW = "2026-10-29T12:00:00+09:00"; node tools/preview/preview-serve
 PREVIEW_NOW=2026-10-29T12:00:00+09:00 node tools/preview/preview-server.cjs
 ```
 
-基準日を固定していないプレビューでは、verify-ui・verify-marketing は実行前に停止します。
+基準日を固定していないプレビューでは、verify-ui・verify-marketing・verify-postings は実行前に停止します。
 
 ```
 node tools/preview/verify-api.mjs                 # HTTP検証（選考フロー・409・訂正/取消・集計）
@@ -81,6 +97,9 @@ API単体テストは `cd api-server && npm test`（DB接続なし）。
 
 求人分析のPostgreSQL結合テスト（任意・検証専用DBのみ）：`cd api-server` で `JM_PG_TEST_URL=postgres://postgres@127.0.0.1:<ポート>/<名前>_test node --test tests/integration/job-marketing.pg.mjs`。
 接続先が localhost で、DB名が `_test` で終わる場合だけ実行し、そのDBの求人分析テーブルを作り直します（本番・共有DBには使わないでください）。DBはSSL接続が必要です。
+
+求人一覧のPostgreSQL結合テスト（任意・検証専用DBのみ。上とは別のDBを指定）：`cd api-server` で `JP_PG_TEST_URL=postgres://postgres@127.0.0.1:<ポート>/<名前>_test node --test tests/integration/job-postings.pg.mjs`。
+そのDBに本番と同じ列構成の架空の応募者テーブルと migration 003・004・005 を作り直し、実際のAPIで確認します。応募者テーブルが既にあるDBでは、このテストが付けた印が無い限り中止します。
 
 ## DB適用・デプロイ・切り戻し
 

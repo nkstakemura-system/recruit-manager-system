@@ -6,6 +6,7 @@
 // 起動: node tools/preview/preview-server.cjs            （選考履歴テーブルありの状態）
 //       node tools/preview/preview-server.cjs --no-history-table （DB適用前の状態：従来の進捗更新）
 //       node tools/preview/preview-server.cjs --no-marketing-table（求人分析のテーブル未作成の状態）
+//       node tools/preview/preview-server.cjs --no-postings-table（求人一覧のテーブル未作成の状態＝migration 005 適用前）
 //       node tools/preview/preview-server.cjs --real-csv <フォルダ>（実際のCSVを「確認待ち」として画面に渡す。自動では登録しない）
 //       node tools/preview/preview-server.cjs --real-csv <フォルダ> --seed-json <JSON>（既存実績のスナップショットを先に登録して、置き換えの確認をする。JSONはリポジトリに置かない）
 // 検証の基準日（PREVIEW_NOW=2026-10-29T12:00:00+09:00 など）。指定したときだけ、このプレビューの「現在時刻」を固定する
@@ -34,6 +35,8 @@ const { buildFacts } = require(path.join(root, "api-server", "dashboardFacts.js"
 const contacts = require(path.join(root, "api-server", "contactService.js"));
 const marketing = require(path.join(root, "api-server", "jobMarketingService.js"));
 const { createMemoryMarketingStore } = require(path.join(root, "api-server", "jobMarketingMemoryStore.js"));
+const jobPostings = require(path.join(root, "api-server", "jobPostingService.js"));
+const { createMemoryJobPostingStore } = require(path.join(root, "api-server", "jobPostingMemoryStore.js"));
 
 const dist = path.join(root, "react-app", "dist");
 const indexPath = path.join(dist, "index.html");
@@ -82,6 +85,8 @@ const store = createMemorySelectionStore(candidates, { ready: historyTable });
 const contactStore = contacts.createMemoryContactStore(candidates);
 const marketingTable = !process.argv.includes("--no-marketing-table");
 const marketingStore = createMemoryMarketingStore({ ready: marketingTable });
+const postingsTable = marketingTable && !process.argv.includes("--no-postings-table");
+const postingStore = createMemoryJobPostingStore({ marketingStore, candidates, selectionStore: store, ready: postingsTable });
 
 // 実CSVの確認（--real-csv <フォルダ>）。Indeedのレポート（EngagementSummary_*.csv・JobsCampaigns_*.csv）と旧管理CSV（求人マーケティング*.csv）だけを読み取り、
 // メモリ上に「確認待ち」として保持する。職種・年・「応募」の意味などは画面で利用者が確定し、取込後もメモリ内のみ（DB・Gitには入らない）。
@@ -168,6 +173,50 @@ async function seedMarketing() {
   await ref("営業", { company_name: "架空商事株式会社", job_title: "ルート営業", url: "https://example.org/sales?id=1", checked_on: "2026-10-15" });
 }
 
+// 求人一覧の架空データ（第5弾）。本番と同じ jobPostingService で登録する（求人分析の実績は追加しない）。
+// * CSV由来を想定した求人2件（求人原稿のみ・初版未登録・公開状態は未設定＝要設定）
+// * 版・公開履歴のある求人3件（ハローワーク：公開中・2版、Indeed：公開→非公開、AirWORK：求人IDなし）
+// * 応募者のひも付けは、求人経路の架空応募者の一部だけ（実データでは自動でひも付けない）
+async function seedPostings() {
+  const { categories } = await marketing.overview(marketingStore);
+  const id = name => categories.find(c => c.name === name).id;
+  const by = "preview-seed@web";
+  await postingStore.transaction(async tx => {
+    await tx.insertPosting({ category_id: id("営業"), media: "Indeed", external_key: "id:fictional-sales-001", job_id: "fictional-sales-001", title: "架空：ルート営業（新規開拓なし）", actor: by });
+    await tx.insertPosting({ category_id: id("CADオペ（本社）"), media: "Indeed", external_key: "id:fictional-cad-001", job_id: "fictional-cad-001", title: "架空：CADオペレーター/設計補助", actor: by });
+  });
+  const body1 = ["架空の求人内容です。", "・太陽光パネルの設置工事", "・蓄電池の配線工事", "未経験の方も先輩が丁寧に教えます。"].join("\n");
+  const common = { location: "架空県架空市", employment_type: "正社員", work_hours: "8:00〜17:00（休憩60分）", holidays: "日曜・祝日、隔週土曜", contact_person: "架空担当" };
+  const hw = await jobPostings.createPosting(postingStore, {
+    category_id: id("電気工事士"), media: "ハローワーク", job_id: "00000-00000001", visibility: "public", effective_date: "2026-10-01",
+    title: "架空：電気工事士（太陽光・蓄電池）", body: body1, salary: "月給25万円〜35万円", ...common,
+  }, by);
+  await jobPostings.addRevision(postingStore, hw.id, {
+    expected_revision_no: 1, title: "架空：電気工事士（太陽光・蓄電池）", body: body1 + "\n資格手当あり。", salary: "月給27万円〜37万円（資格手当込み）", ...common,
+    change_summary: "給与を2万円引き上げ、資格手当を追記", change_reason: "応募が少ないため（架空）",
+  }, by);
+  await marketing.savePlanEvent(marketingStore, { category_id: id("電気工事士"), posting_id: hw.id, status: "free", effective_date: "2026-10-01", note: "架空：ハローワークは無料掲載" }, by);
+  const sales = await jobPostings.createPosting(postingStore, {
+    category_id: id("営業"), media: "Indeed", job_id: "fictional-sales-002", visibility: "public", effective_date: "2026-09-01",
+    title: "架空：法人営業スタッフ", body: "架空の求人内容です（法人営業）。", employment_type: "正社員", salary: "月給24万円〜",
+  }, by);
+  await jobPostings.setVisibility(postingStore, sales.id, { expected_seq: 1, visibility: "private", effective_date: "2026-10-20", reason: "架空：採用予定数に達したため" }, by);
+  const air = await jobPostings.createPosting(postingStore, {
+    category_id: id("CADオペ（ときがわ）"), media: "エアワーク", visibility: "public", effective_date: "2026-10-05",
+    title: "架空：設備CADオペレーター（施工図）", body: "架空の求人内容です（CAD）。", employment_type: "パート・アルバイト",
+  }, by);
+  const link = (candidateId, postingId) => jobPostings.setCandidateLink(postingStore, candidateId, { posting_id: postingId, expected_link_id: null, reason: "架空データ" }, by);
+  const p1 = (await jobPostings.overview(postingStore)).postings.find(p => p.job_id === "fictional-sales-001").id;
+  await link(900001, p1);
+  await link(900003, hw.id);
+  await link(900018, hw.id);
+  await link(900017, hw.id);
+  await link(900012, sales.id);
+  await link(900013, sales.id);
+  await link(900016, sales.id);
+  await link(900010, air.id);
+}
+
 // 架空の選考履歴（実際の操作と同じく selectionService 経由で追記する）
 async function seedHistory() {
   const step = async (id, kind, event_date, extra = {}) => {
@@ -250,6 +299,24 @@ async function api(req, res, pathname) {
   if (pathname === "/api/preview/clock" && method === "GET") return send(res, 200, { pinned: PREVIEW_NOW != null, now: PREVIEW_NOW == null ? null : new Date().toISOString() });
   if (!signedIn(req)) return send(res, 401, { error: "Authentication required" });
 
+  // 本番と同じ求人一覧API（jobPostingService）をメモリ保存先で実行する
+  if (pathname === "/api/job-postings") {
+    if (method === "GET") return selectionCall(res, () => jobPostings.overview(postingStore));
+    if (method === "POST") { const body = await readBody(req); return selectionCall(res, () => jobPostings.createPosting(postingStore, body, actor)); }
+  }
+  const jp = /^\/api\/job-postings\/(\d+)(?:\/(candidates|revisions|visibility))?$/.exec(pathname);
+  if (jp) {
+    const [, postingId, part] = jp;
+    if (!part && method === "GET") return selectionCall(res, () => jobPostings.detail(postingStore, postingId));
+    if (part === "candidates" && method === "GET") return selectionCall(res, () => jobPostings.candidates(postingStore, postingId, new URL(req.url, "http://x").searchParams.get("kind")));
+    const body = method === "POST" ? await readBody(req) : {};
+    if (part === "revisions" && method === "POST") return selectionCall(res, () => jobPostings.addRevision(postingStore, postingId, body, actor));
+    if (part === "visibility" && method === "POST") return selectionCall(res, () => jobPostings.setVisibility(postingStore, postingId, body, actor));
+    return send(res, 404, { error: "Not found" });
+  }
+  const cjp = /^\/api\/candidates\/(\d+)\/job-posting$/.exec(pathname);
+  if (cjp && method === "GET") return selectionCall(res, () => jobPostings.candidateLink(postingStore, cjp[1]));
+
   // 本番と同じ求人分析API（jobMarketingService）をメモリ保存先で実行する
   if (pathname === "/api/job-marketing" && method === "GET")
     return selectionCall(res, async () => ({ ...(await marketing.overview(marketingStore)), ...(realCsvDir ? { preview_pending_files: true } : {}) }));
@@ -294,8 +361,19 @@ async function api(req, res, pathname) {
     if (method === "GET") return send(res, 200, candidates.map(listRow));
     if (method === "POST") {
       const body = await readBody(req);
-      const candidate = { ...blank, ...body, id: 900000 + candidates.length + 1, status: body.status || 1, applied_at: body.applied_at || flow.todayTokyo(), created_at: new Date().toISOString() };
+      // 本番と同じく、求人の選択は応募者の登録と同時に保存する（求人の保存に失敗したら応募者も登録しない）
+      const { job_posting: link, ...fields } = body;
+      const candidate = { ...blank, ...fields, id: 900000 + candidates.length + 1, status: body.status || 1, applied_at: body.applied_at || flow.todayTokyo(), created_at: new Date().toISOString() };
       candidates.unshift(candidate);
+      if (link && typeof link === "object" && link.posting_id != null && link.posting_id !== "") {
+        try {
+          if (!postingsTable) throw Object.assign(new Error(jobPostings.UNAVAILABLE_MESSAGE), { status: 503, code: "postings_unavailable" });
+          await postingStore.transaction(tx => jobPostings.applyLink(tx, { id: String(candidate.id), is_coop: candidate.is_coop === true, source_type: candidate.source_type ?? null }, { posting_id: link.posting_id, expected_link_id: null, reason: link.reason }, actor));
+        } catch (err) {
+          candidates.splice(candidates.indexOf(candidate), 1);
+          return send(res, err.status || 500, { error: err.status ? err.message : "Local preview error", code: err.code });
+        }
+      }
       return send(res, 200, candidate);
     }
   }
@@ -335,10 +413,27 @@ async function api(req, res, pathname) {
         ...(Array.isArray(body.work_history) ? body.work_history.flatMap(w => [w?.start_year, w?.end_year]) : []),
         ...(Array.isArray(body.licenses) ? body.licenses.map(l => l?.date) : [])];
       if (years.some(longYear)) return send(res, 400, { error: "年は西暦4桁で入力してください" });
+      // 本番と同じく、求人のひも付けは送られた場合だけ保存する（失敗したら他の項目も保存しない）
+      // 本番と同じく、保存後に協力業者・求人以外の応募経路になるのに求人へのひも付けが残る場合は保存しない（409）。
+      // 判定は本番と同じ値で行う（本番のPUTは source_type が送られなければ NULL にするため、省略時は「求人以外」として判定する）。
+      // ※プレビューの保存自体は従来どおり送られた項目だけ（既存の検証のため）。判定だけを本番に合わせる
+      const nextCandidate = { id: String(c.id), is_coop: isCoop, source_type: body.source_type || null };
+      if (postingsTable) {
+        try {
+          await postingStore.transaction(async tx => {
+            if (Object.prototype.hasOwnProperty.call(body, "job_posting")) await jobPostings.applyLink(tx, nextCandidate, body.job_posting, actor);
+            await jobPostings.assertLinkConsistent(tx, nextCandidate);
+          });
+        } catch (err) {
+          return send(res, err.status || 500, { error: err.status ? err.message : "Local preview error", code: err.code });
+        }
+      } else if (Object.prototype.hasOwnProperty.call(body, "job_posting")) {
+        return send(res, 503, { error: jobPostings.UNAVAILABLE_MESSAGE, code: "postings_unavailable" });
+      }
       // 送られた項目だけを保存（送られなかった選考列は保持）。
       // 本番と同じく、連絡先（tel・email・primary_contact）は連絡先APIだけが更新する
       const contactOwned = ["tel", "email", "primary_contact"];
-      for (const [key, value] of Object.entries(body)) if (key !== "id" && !contactOwned.includes(key)) c[key] = value;
+      for (const [key, value] of Object.entries(body)) if (key !== "id" && key !== "job_posting" && !contactOwned.includes(key)) c[key] = value;
       return send(res, 200, { message: "更新完了" });
     }
     if (method === "PATCH" && one[2] === "restore") {
@@ -375,6 +470,7 @@ const contentTypes = {
 };
 
 (historyTable ? seedHistory() : Promise.resolve()).then(() => marketingTable && !realCsvDir && !seedJson ? seedMarketing() : null)
+  .then(() => postingsTable && !realCsvDir && !seedJson ? seedPostings() : null)
   .then(() => marketingTable && seedJson ? seedSnapshot(seedJson) : null).then(() => http.createServer(async (req, res) => {
   try {
     const pathname = new URL(req.url, `http://${host}:${port}`).pathname;
@@ -395,5 +491,6 @@ const contentTypes = {
   console.log(historyTable ? "モード: 選考履歴テーブルあり（第2弾の新しい選考更新）" : "モード: 選考履歴テーブルなし（DB適用前の従来動作）");
   if (realCsvDir) console.log(`求人分析: 実CSV ${pendingFiles.length}件を確認待ちとして読み込み（未登録・メモリ内のみ）：${pendingFiles.map(p => p.name).join("、")}`);
   else console.log(marketingTable ? "求人分析: 架空実績あり（営業・電気工事士に無料→有料の切替。CADオペ2職種はCSV取込確認用に未登録）" : "求人分析: テーブル未作成の状態");
+  console.log(postingsTable ? "求人一覧: 架空の求人5件（CSV由来を想定した初版未登録・要設定2件を含む）" : "求人一覧: テーブル未作成の状態（migration 005 適用前）");
   console.log(`架空データ ${candidates.length} 件。更新はメモリ内のみで、終了すると消えます。終了: Ctrl+C`);
 }));
