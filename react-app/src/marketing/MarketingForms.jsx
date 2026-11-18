@@ -9,14 +9,15 @@ export const MIN_DATE = "1000-01-01";
 export const MAX_DATE = "9999-12-31";
 
 // Esc・閉じるボタンで閉じるダイアログ
-export function Modal({ title, onClose, children, wide }) {
+// escape=false：上に別のダイアログを開いている間は Esc で閉じない（重ねて開いたダイアログだけを閉じる）
+export function Modal({ title, onClose, children, wide, escape = true }) {
   const closeRef = useRef(null);
   useEffect(() => {
     closeRef.current?.focus();
-    const onKey = e => { if (e.key === "Escape") onClose(); };
+    const onKey = e => { if (e.key === "Escape" && escape) onClose(); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, escape]);
   return (
     <div className="jm-backdrop">
       <div className={`jm-modal${wide ? " is-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
@@ -212,7 +213,8 @@ export function VoidDialog({ record, onClose, onSaved }) {
 }
 
 // 職種の追加・名称変更・募集停止／再開。1職種1行（左：職種名、中央：状態、右：編集）。実績はIDで関連付けているため名称を変えても残る
-export function CategoryManager({ categories, onClose, onSaved }) {
+// onCreated(職種)：職種を追加したときに呼ぶ（任意。求人登録の「＋」から開いた場合に、追加した職種を選択済みにする）
+export function CategoryManager({ categories, onClose, onSaved, onCreated }) {
   const [editing, setEditing] = useState(null); // { id, name }
   const [name, setName] = useState("");
   const [error, setError] = useState("");
@@ -256,7 +258,10 @@ export function CategoryManager({ categories, onClose, onSaved }) {
       <div className="jm-cat-add">
         <input className="jm-input" placeholder="追加する職種名" aria-label="追加する職種名" value={name} maxLength={50} onChange={e => setName(e.target.value)} />
         <button type="button" className="jm-btn is-primary" disabled={!name.trim()}
-          onClick={async () => { if (await run(marketingApi.createCategory({ name }))) setName(""); }}>追加</button>
+          onClick={async () => {
+            const res = await marketingApi.createCategory({ name });
+            if (res.ok) { setError(""); setName(""); onSaved(); onCreated?.(res.data); } else setError(errorText(res, "保存できませんでした"));
+          }}>追加</button>
       </div>
       <p className="jm-sub">停止しても過去の実績・参考求人は残ります。</p>
       {error && <p className="jm-error" role="alert">{error}</p>}

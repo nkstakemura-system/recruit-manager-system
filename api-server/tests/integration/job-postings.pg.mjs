@@ -300,6 +300,34 @@ test("CSV import reuses the posting with the same job ID; plan changes from the 
   assert.equal((await q("SELECT title FROM public.job_marketing_postings WHERE id = $1", [ids.indeed]))[0].title, "架空：営業");
 });
 
+
+test("the batched read (one round trip, read-only snapshot) returns the same results as the transaction path", { skip }, async () => {
+  const { Pool } = require("pg");
+  const pool = new Pool({ ...target.config, ssl: { rejectUnauthorized: false }, max: 3 });
+  try {
+    const { createPgMarketingStore } = require(path.join(apiDir, "jobMarketingPgStore.js"));
+    const { createPgJobPostingStore } = require(path.join(apiDir, "jobPostingPgStore.js"));
+    const svc = require(path.join(apiDir, "jobPostingService.js"));
+    const store = createPgJobPostingStore(pool, createPgMarketingStore(pool));
+    const viaTx = { ready: store.ready, transaction: store.transaction }; // read を持たない保存先（従来の読み方）
+    const strip = v => JSON.parse(JSON.stringify(v));
+    assert.deepEqual(strip(await svc.overview(store)), strip(await svc.overview(viaTx)));
+    for (const id of [ids.indeed, ids.hw, ids.csvPosting]) assert.deepEqual(strip(await svc.detail(store, id)), strip(await svc.detail(viaTx, id)));
+    assert.deepEqual(strip(await svc.candidates(store, ids.indeed, "applied")), strip(await svc.candidates(viaTx, ids.indeed, "applied")));
+    assert.deepEqual(strip(await svc.candidateLink(store, ids.c1)), strip(await svc.candidateLink(viaTx, ids.c1)));
+    // 一覧は全文を読まない（最新の版の本文は null）。詳細は全文を読む
+    const row = (await svc.overview(store)).postings.find(p => p.id === ids.indeed);
+    assert.equal(typeof row.record_count, "number");
+    assert.ok((await svc.detail(store, ids.indeed)).current.body);
+    // 読み取りは読み取り専用のトランザクション（書き込みは拒否される）
+    const c = await pool.connect();
+    try {
+      await c.query("BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY");
+      await assert.rejects(c.query("INSERT INTO public.job_marketing_imports (file_name, file_hash, format, record_count) VALUES ('x', repeat('a', 64), 'indeed_csv', 0)"), /read-only/);
+    } finally { await c.query("ROLLBACK").catch(() => {}); c.release(); }
+  } finally { await pool.end(); }
+});
+
 test("physical deletion of a candidate cascades only its link history", { skip }, async () => {
   const links = (await q("SELECT count(*)::int AS n FROM public.candidate_job_posting_links WHERE candidate_id = $1", [ids.c3]))[0].n;
   assert.equal(links, 1);

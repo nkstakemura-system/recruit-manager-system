@@ -333,6 +333,95 @@ test("link consistency: a linked applicant cannot leave the 求人 route or beco
   await rejectsWith(link(store, 12, indeed.id), 400);
 });
 
+
+test("media: a new media name is reused afterwards and spelling variants of a registered name are aligned (no migration)", async () => {
+  assert.equal(jp.canonicalMedia("求人 ボックス", ["求人ボックス"]), "求人ボックス");
+  assert.equal(jp.canonicalMedia("求人ﾎﾞｯｸｽ", ["求人ボックス"]), "求人ボックス");
+  assert.equal(jp.canonicalMedia("インディード", []), "Indeed");
+  assert.equal(jp.canonicalMedia("求人ボックス", []), "求人ボックス");
+  assert.deepEqual(jp.similarMedia("ボックス", ["求人ボックス", "Indeed"]), ["求人ボックス"]);
+  assert.deepEqual(jp.similarMedia("求人ボックス", ["求人ボックス"]), []);
+  const { store, marketingStore } = setup();
+  const cat = await categoryId(marketingStore, "営業");
+  const a = await service.createPosting(store, { category_id: cat, media: "求人ボックス", title: "架空A" }, actor);
+  const b = await service.createPosting(store, { category_id: cat, media: "求人 ボックス", title: "架空B" }, actor);
+  const view = await service.overview(store);
+  assert.deepEqual([view.postings.find(p => p.id === a.id).media, view.postings.find(p => p.id === b.id).media], ["求人ボックス", "求人ボックス"]);
+  assert.ok(view.media.includes("求人ボックス"));
+  assert.ok(!view.media.includes("求人 ボックス"));
+});
+
+test("list rows carry the number of active analysis records per posting (for the 実績あり link)", async () => {
+  const { store, marketingStore, sales, indeed, hw } = await seeded();
+  await marketing.saveRecord(marketingStore, { record: { category_id: sales, posting_id: indeed.id, media: "Indeed", period_start: "2026-06-01", period_end: "2026-06-30", plan_type: "free", impressions: 10, clicks: 1 } }, actor);
+  const rows = (await service.overview(store)).postings;
+  assert.deepEqual([rows.find(p => p.id === indeed.id).record_count, rows.find(p => p.id === hw.id).record_count], [1, 0]);
+  // 求人分析で表示しない媒体（既定の媒体以外）の実績は数えない（求人分析の集計対象とそろえる）
+  await marketing.saveRecord(marketingStore, { record: { category_id: sales, posting_id: hw.id, media: "ハローワーク", period_start: "2026-06-01", period_end: "2026-06-30", plan_type: "free", impressions: 5, clicks: 1 } }, actor);
+  assert.equal((await service.overview(store)).postings.find(p => p.id === hw.id).record_count, 0);
+});
+
+
+test("batched read (PostgreSQL store, fake client): one round trip, mapped results, ROLLBACK and release on failure", async () => {
+  const { createPgJobPostingStore } = require("../jobPostingPgStore.js");
+  const marketingStore = { ready: async () => true, tx: () => ({}) };
+  function fakeDb({ selection = true, fail = null } = {}) {
+    const calls = [];
+    const released = [];
+    const client = {
+      async query(sql) {
+        calls.push(sql);
+        if (/to_regclass\('public\.candidate_selection_events'\)/.test(sql)) return { rows: [{ ok: selection }] };
+        if (sql === "ROLLBACK") { if (fail === "rollback") throw new Error("rollback failed"); return { rows: [] }; }
+        if (fail) throw new Error("batch failed");
+        const parts = sql.split(";\n");
+        return parts.map((part, i) => ({
+          rows: i === 0 || i === parts.length - 1 ? [] : /job_marketing_plan_events/.test(part) ? [{ id: "1", budget: "30000.00" }]
+            : /job_marketing_records/.test(part) ? [{ id: "2", cost: "1200.50", daily: null }]
+            : /FROM public\.candidates$/.test(part.trim()) ? [{ id: "3", is_coop: null, is_deleted: true }] : [{ id: "x" }],
+        }));
+      },
+      release(err) { released.push(err === undefined ? "ok" : "destroyed"); },
+    };
+    return { calls, released, db: { connect: async () => client, query: client.query } };
+  }
+  const keys = ["categories", "postings", "revisions", "planEvents", "records", "candidates", "links", "selectionEvents"];
+  const ok1 = fakeDb();
+  const out = await createPgJobPostingStore(ok1.db, marketingStore).read(keys);
+  const batch = ok1.calls.find(s => s.startsWith("BEGIN"));
+  assert.ok(batch.startsWith("BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY;\n") && batch.endsWith(";\nCOMMIT"));
+  assert.equal(ok1.calls.filter(s => s.startsWith("BEGIN")).length, 1, "one round trip for all reads");
+  assert.match(batch, /DISTINCT ON \(posting_id\)/, "list reads only the latest version (no full text)");
+  assert.doesNotMatch(batch, /\$\d/, "no parameters are interpolated");
+  assert.deepEqual([out.planEvents[0].budget, out.records[0].cost, out.candidates[0].is_coop, out.candidates[0].is_deleted], [30000, 1200.5, false, true]);
+  assert.deepEqual(ok1.released, ["ok"]);
+  const full = fakeDb();
+  await createPgJobPostingStore(full.db, marketingStore).read(["revisions"], { fullRevisions: true });
+  assert.doesNotMatch(full.calls.find(s => s.startsWith("BEGIN")), /DISTINCT ON/);
+  const noSel = fakeDb({ selection: false });
+  const out2 = await createPgJobPostingStore(noSel.db, marketingStore).read(keys);
+  assert.deepEqual(out2.selectionEvents, []);
+  assert.doesNotMatch(noSel.calls.find(s => s.startsWith("BEGIN")), /candidate_selection_events/);
+  const bad = fakeDb({ fail: "batch" });
+  await assert.rejects(createPgJobPostingStore(bad.db, marketingStore).read(keys), /batch failed/);
+  assert.ok(bad.calls.includes("ROLLBACK"));
+  assert.deepEqual(bad.released, ["ok"]);
+  const worse = fakeDb({ fail: "rollback" });
+  await assert.rejects(createPgJobPostingStore(worse.db, marketingStore).read(keys), /batch failed/);
+  assert.deepEqual(worse.released, ["destroyed"], "a connection whose ROLLBACK failed is not returned to the pool");
+});
+
+test("duplicate check matches media names by the same rule (spelling-only variants are the same media)", async () => {
+  const { store, marketingStore } = setup();
+  const cat = await categoryId(marketingStore, "営業");
+  // 既存データに表記違いの媒体名が残っている場合（例：別の経路で登録済み）を再現
+  await store.transaction(tx => tx.insertPosting({ category_id: cat, media: "求人 ボックス", external_key: "id:B", job_id: "B", title: "既存B" }));
+  await service.createPosting(store, { category_id: cat, media: "求人ボックス", job_id: "A", title: "架空A" }, actor);
+  await rejectsWith(service.createPosting(store, { category_id: cat, media: "求人 ボックス", job_id: "B", title: "重複B" }, actor), 409, "duplicate");
+  await rejectsWith(service.createPosting(store, { category_id: cat, media: "求人ボックス", job_id: "B", title: "重複B" }, actor), 409, "duplicate");
+  assert.equal((await service.overview(store)).postings.find(p => p.job_id === "B").media, "求人 ボックス", "existing values are not rewritten");
+});
+
 test("readiness: without migration 005 the list reports ready:false and writes return 503", async () => {
   const { store } = setup({ ready: false });
   assert.equal((await service.overview(store)).ready, false);

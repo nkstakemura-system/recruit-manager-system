@@ -41,6 +41,26 @@ export function mediaKey(value) {
   return found ? found.name : nfkc(value);
 }
 export const sameMedia = (a, b) => mediaKey(a) != null && mediaKey(a) === mediaKey(b);
+// 登録済みの媒体名（names）と表記だけが違う（空白・全角半角・大文字小文字）場合は、登録済みの表記にそろえる。
+// 例：「求人 ボックス」「求人ﾎﾞｯｸｽ」→ 登録済みの「求人ボックス」。登録済みに無ければ mediaKey の結果（新しい媒体）
+export function canonicalMedia(value, names = []) {
+  const key = mediaKey(value);
+  if (!key) return null;
+  const sq = squash(key);
+  const found = names.map(mediaKey).find(n => n && squash(n) === sq);
+  return found || key;
+}
+// 媒体名の照合キー（表記だけが違う媒体名は同じキー）。重複の判定に使う
+export const mediaMatchKey = value => { const key = mediaKey(value); return key ? squash(key) : null; };
+
+// 入力中の媒体名に近い登録済みの媒体（候補の表示用。自動では置き換えない）。同じ表記は除く
+export function similarMedia(value, names = []) {
+  const key = mediaKey(value);
+  if (!key) return [];
+  const sq = squash(key);
+  return [...new Set(names.map(mediaKey).filter(Boolean))]
+    .filter(n => n !== key && (squash(n) === sq || (sq.length >= 2 && (squash(n).includes(sq) || sq.includes(squash(n))))));
+}
 // 選択肢（既定の媒体＋登録済みの求人の媒体）
 export function mediaOptions(postings = []) {
   const names = MEDIA.map(m => m.name);
@@ -170,7 +190,7 @@ export function improvementTimeline({ revisions = [], records = [], planEvents =
   const items = [];
   for (const r of revisions) {
     if (!r.change_summary && !r.change_reason && Number(r.revision_no) !== 1) continue;
-    items.push({ kind: "revision", at: r.created_at, date: String(r.created_at || "").slice(0, 10), label: Number(r.revision_no) === 1 ? "初版登録" : `求人内容の修正（第${r.revision_no}版）`,
+    items.push({ kind: "revision", at: r.created_at, date: String(r.created_at || "").slice(0, 10), label: Number(r.revision_no) === 1 ? "求人原稿を登録" : `求人原稿の修正（第${r.revision_no}版）`,
       note: [r.change_summary, r.change_reason ? `理由：${r.change_reason}` : ""].filter(Boolean).join("\n") || null, actor: r.actor || null, ref: `revision:${r.id}` });
   }
   for (const r of records) {

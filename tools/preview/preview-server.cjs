@@ -195,6 +195,9 @@ async function seedPostings() {
     expected_revision_no: 1, title: "架空：電気工事士（太陽光・蓄電池）", body: body1 + "\n資格手当あり。", salary: "月給27万円〜37万円（資格手当込み）", ...common,
     change_summary: "給与を2万円引き上げ、資格手当を追記", change_reason: "応募が少ないため（架空）",
   }, by);
+  // 求人原稿ごとの実績（2025年10月。既存の求人分析の検証で比べる直近12か月には入らない月）。求人一覧の「実績あり」から求人分析の対象求人へ移動する確認用
+  await marketing.saveRecord(marketingStore, { record: { category_id: id("電気工事士"), posting_id: hw.id, media: "Indeed", period_start: "2025-10-01", period_end: "2025-10-31",
+    plan_type: "free", impressions: 120, clicks: 9, apply_starts: 1, applies: 0 } }, by);
   await marketing.savePlanEvent(marketingStore, { category_id: id("電気工事士"), posting_id: hw.id, status: "free", effective_date: "2026-10-01", note: "架空：ハローワークは無料掲載" }, by);
   const sales = await jobPostings.createPosting(postingStore, {
     category_id: id("営業"), media: "Indeed", job_id: "fictional-sales-002", visibility: "public", effective_date: "2026-09-01",

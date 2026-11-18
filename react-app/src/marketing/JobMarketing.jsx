@@ -3,6 +3,7 @@
 // 画面は上から「操作 → 主要KPI → 率 → 無料／有料の比較 → 月別推移 → 自動分析コメント → 履歴（折り畳み）」の順（F型・左寄せ）。
 // ローカルプレビューの実CSVモード（overview に preview_pending_files がある場合）だけ、確認待ちのCSVを取得・表示する。本番では取得しない。
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import {
   DEFAULT_MEDIA, JOBS_REPORT, METRICS, METRIC_LABELS, PLAN_STATUS, RATE_LABELS, THRESHOLDS, analyze, comparability, fmtCount, fmtRate, fmtYen,
   isFullMonth, monthAggregate, monthDeltas, monthLabel, monthRange, monthlySeries, periodLabel, planCompareVisible, planResolver, planSplit, rangesLabel, rates, safeUrl,
@@ -35,13 +36,16 @@ function postingName(r, postings) {
 }
 
 // 選択月の求人原稿ごとの内訳（折り畳み）。月間合計と月途中の実績、月をまたいで集計に含めていない記録を区別する
-function PostingBreakdown({ agg, active, postings }) {
+// focusId: 求人詳細から開いた場合の対象の求人原稿（内訳を開いた状態にし、その行を強調する）
+function PostingBreakdown({ agg, active, postings, focusId = null }) {
   const range = monthRange(agg.month);
   const used = agg.record_ids.map(id => active.find(r => String(r.id) === id)).filter(Boolean);
   const spanning = agg.spanning.map(id => active.find(r => String(r.id) === id)).filter(Boolean);
   if (!used.length && !spanning.length) return null;
+  const isFocus = r => focusId != null && String(r.posting_id) === String(focusId);
+  const focusHit = used.some(isFocus) || spanning.some(isFocus);
   return (
-    <details className="jm-card jm-fold-card jm-postings">
+    <details className="jm-card jm-fold-card jm-postings" open={focusHit || undefined}>
       <summary>求人原稿ごとの内訳<span className="jm-count">{used.length}</span></summary>
       <ul className="jm-posting-list">
         {used.map(r => {
@@ -53,7 +57,7 @@ function PostingBreakdown({ agg, active, postings }) {
           const url = safeUrl(meta.job_url);
           const full = rows ? null : isFullMonth(r.period_start, r.period_end) && r.period_start === range.start;
           return (
-            <li key={r.id}>
+            <li key={r.id} className={isFocus(r) ? "is-focus" : undefined}>
               <div className="jm-posting-head">
                 <strong>{postingName(r, postings)}</strong>
                 {full === true && <span className="jm-chip is-ok">月間合計</span>}
@@ -79,7 +83,7 @@ function PostingBreakdown({ agg, active, postings }) {
       {spanning.length > 0 && (
         <div className="jm-posting-spanning">
           <p className="jm-sub"><b>月をまたぐ記録（この月の集計には含めていません）</b></p>
-          <ul>{spanning.map(r => <li key={r.id} className="jm-sub">#{r.id} {periodLabel(r.period_start, r.period_end)}・{postingName(r, postings)}・表示 {fmtCount(r.impressions)}／クリック {fmtCount(r.clicks)}</li>)}</ul>
+          <ul>{spanning.map(r => <li key={r.id} className={`jm-sub${isFocus(r) ? " is-focus" : ""}`}>#{r.id} {periodLabel(r.period_start, r.period_end)}・{postingName(r, postings)}・表示 {fmtCount(r.impressions)}／クリック {fmtCount(r.clicks)}</li>)}</ul>
         </div>
       )}
     </details>
@@ -238,6 +242,9 @@ export default function JobMarketing() {
   const [month, setMonth] = useState(null);
   // 求人詳細（第5弾）の「求人分析で見る」から開いた場合は、その職種を最初に表示する（?category=職種ID）
   const [categoryId, setCategoryId] = useState(() => new URLSearchParams(window.location.search).get("category"));
+  // 求人詳細から開いた場合の対象の求人原稿（?posting=求人原稿ID）。その求人の最新の実績の月を最初に表示し、求人詳細へ戻れるようにする
+  const [focusPosting] = useState(() => new URLSearchParams(window.location.search).get("posting"));
+  const location = useLocation();
   const [dialog, setDialog] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -258,6 +265,12 @@ export default function JobMarketing() {
       if (!alive) return;
       if (!res.ok) { setError(errorText(res, "求人分析のデータを読み込めませんでした")); return; }
       setData(res.data);
+      if (focusPosting) {
+        // 求人分析の集計対象（既定の媒体）の実績から、最新の月を選ぶ
+        const latest = (res.data.records || []).filter(r => r.state === "active" && r.kind === "metric" && String(r.posting_id) === String(focusPosting) && r.media === DEFAULT_MEDIA)
+          .sort((a, b) => String(b.period_start).localeCompare(String(a.period_start)))[0];
+        if (latest) setMonth(m => m || latest.period_start.slice(0, 7));
+      }
       if (res.data?.preview_pending_files) marketingApi.pendingFiles().then(p => { if (alive && p.ok && Array.isArray(p.data?.files)) setPending(p.data.files); }).catch(() => {});
     }).catch(() => alive && setError("求人分析のデータを読み込めませんでした。再読み込みしてください。"));
     return () => { alive = false; };
@@ -324,6 +337,10 @@ export default function JobMarketing() {
 
   return (
     <div className="jm-page">
+      {focusPosting && (
+        <Link className="jm-btn is-small jm-back-link" to={`/jobs/${encodeURIComponent(focusPosting)}`}
+          state={typeof location.state?.postingFrom === "string" ? { from: location.state.postingFrom } : undefined}>← 求人詳細へ戻る</Link>
+      )}
       <div className="jm-bar">
         <h2 className="jm-h2">求人分析</h2>
         <span className="jm-month">
@@ -415,7 +432,7 @@ export default function JobMarketing() {
               </div>
             </>
           )}
-          {cur.status !== "empty" && <PostingBreakdown agg={cur} active={active} postings={postings} />}
+          {(cur.status !== "empty" || (focusPosting && cur.spanning?.length > 0)) && <PostingBreakdown agg={cur} active={active} postings={postings} focusId={focusPosting} />}
 
           {/* 無料・有料の両方に実績がある場合だけ表示する（片方だけ・不明だけの場合は表示しない） */}
           {planCompareVisible(view.plans) && (

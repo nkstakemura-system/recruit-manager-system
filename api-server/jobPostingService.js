@@ -67,10 +67,26 @@ function groupEvents(events) {
 }
 
 // 求人ごとの応募者（現在のひも付け）。協力業者は除外。選考終了・アーカイブも応募実績として含む
-async function applicantsByPosting(tx) {
-  const [candidates, links, events] = await Promise.all([tx.listCandidatesBasic(), tx.listLinks(), tx.listSelectionEvents()]);
+// 読み取り（一覧・詳細・応募者モーダル）。保存先が read（PostgreSQL：1回の往復でまとめて読む）を持てばそれを使い、
+// 持たなければ（メモリ）トランザクション内で同じデータを読む。書き込みは従来どおりトランザクションとロックで行う
+const TX_READERS = {
+  categories: tx => tx.listCategories(), postings: tx => tx.listPostings(), revisions: tx => tx.listRevisions(), visibility: tx => tx.listVisibility(),
+  planEvents: tx => tx.listPlanEvents(), records: tx => tx.listRecords(), candidates: tx => tx.listCandidatesBasic(), links: tx => tx.listLinks(),
+  selectionEvents: tx => tx.listSelectionEvents(),
+};
+const SUMMARY_KEYS = ["categories", "postings", "revisions", "visibility", "planEvents", "records", "candidates", "links", "selectionEvents"];
+async function readData(store, keys, opts = {}) {
+  if (typeof store.read === "function") return store.read(keys, opts);
+  return store.transaction(async tx => {
+    const out = {};
+    for (const k of keys) out[k] = await TX_READERS[k](tx);
+    return out;
+  });
+}
+
+function applicantsByPosting({ candidates, links, selectionEvents }) {
   const linkOf = currentLinks(links);
-  const logs = groupEvents(events);
+  const logs = groupEvents(selectionEvents);
   const byPosting = new Map();
   for (const c of candidates) {
     if (c.is_coop === true) continue;
@@ -108,10 +124,11 @@ function csvInfo(records, postingId) {
   };
 }
 
-async function summaries(tx, p, m) {
-  const [categories, postings, revisions, visibility, planEvents, records, applicants] = await Promise.all([
-    tx.listCategories(), tx.listPostings(), tx.listRevisions(), tx.listVisibility(), tx.listPlanEvents(), tx.listRecords(), applicantsByPosting(tx),
-  ]);
+const withoutDaily = ({ daily: _daily, ...rest }) => rest;
+
+function summaries(data, p, m) {
+  const { categories, postings, revisions, visibility, planEvents, records } = data;
+  const applicants = applicantsByPosting(data);
   const plans = m.planEventStates(planEvents);
   const planAt = m.planResolver(plans);
   const recs = m.recordStates(records);
@@ -123,6 +140,8 @@ async function summaries(tx, p, m) {
     const vis = p.visibilityState(visibility.filter(v => String(v.posting_id) === String(posting.id)));
     const people = applicants.get(String(posting.id)) || [];
     const csv = csvInfo(recs, posting.id);
+    // 「実績あり」は求人分析で表示できる実績だけを数える（求人分析の集計は既定の媒体＝Indeed の実績が対象）
+    const recordCount = recs.filter(r => r.kind === "metric" && r.state === "active" && String(r.posting_id) === String(posting.id) && r.media === m.DEFAULT_MEDIA).length;
     return {
       id: String(posting.id), category_id: String(posting.category_id), category_name: category?.name || "（不明な職種）", category_active: category?.is_active !== false,
       media: posting.media, media_key: p.mediaKey(posting.media), job_id: posting.job_id || null, external_key: posting.external_key,
@@ -130,7 +149,7 @@ async function summaries(tx, p, m) {
       revision_no: rev ? Number(rev.revision_no) : 0, url: rev?.url || null, location: rev?.location || null, employment_type: rev?.employment_type || null,
       visibility: vis.current, visibility_since: vis.since, visibility_seq: vis.seq, first_public: vis.first_public, last_private: vis.last_private,
       applicants: people.length, hires: people.filter(x => x.state.hired).length,
-      plan_status: planAt(posting.category_id, posting.id, today)?.status || null,
+      plan_status: planAt(posting.category_id, posting.id, today)?.status || null, record_count: recordCount,
       csv: csv ? { job_url: csv.job_url, csv_status: csv.csv_status, period_start: csv.period_start, period_end: csv.period_end } : null,
       created_at: posting.created_at,
     };
@@ -142,23 +161,21 @@ async function overview(store) {
   const p = await lib();
   if (!(await store.ready())) return { ready: false, as_of: p.todayTokyo(), postings: [], categories: [], media: p.mediaOptions([]) };
   const m = await mlib();
-  return store.transaction(async tx => {
-    const { categories, rows } = await summaries(tx, p, m);
-    // 職種の並び順 → 登録順
-    const order = new Map(categories.map((c, i) => [String(c.id), i]));
-    rows.sort((a, b) => (order.get(a.category_id) ?? 999) - (order.get(b.category_id) ?? 999) || Number(a.id) - Number(b.id));
-    return {
-      ready: true, as_of: p.todayTokyo(), postings: rows, counts: p.visibilityCounts(rows), media: p.mediaOptions(rows),
-      categories: categories.map(c => ({ id: String(c.id), name: c.name, is_active: c.is_active })),
-    };
-  });
+  const { categories, rows } = summaries(await readData(store, SUMMARY_KEYS), p, m);
+  // 職種の並び順 → 登録順
+  const order = new Map(categories.map((c, i) => [String(c.id), i]));
+  rows.sort((a, b) => (order.get(a.category_id) ?? 999) - (order.get(b.category_id) ?? 999) || Number(a.id) - Number(b.id));
+  return {
+    ready: true, as_of: p.todayTokyo(), postings: rows, counts: p.visibilityCounts(rows), media: p.mediaOptions(rows),
+    categories: categories.map(c => ({ id: String(c.id), name: c.name, is_active: c.is_active })),
+  };
 }
 
 async function detail(store, id) {
   const p = await ensureReady(store);
   const m = await mlib();
-  return store.transaction(async tx => {
-    const { categories, rows, revisions, visibility, plans, recs } = await summaries(tx, p, m);
+  {
+    const { categories, rows, revisions, visibility, plans, recs } = summaries(await readData(store, SUMMARY_KEYS, { fullRevisions: true }), p, m);
     const posting = rows.find(r => r.id === String(id));
     if (!posting) throw p.postingError(404, "求人が見つかりません");
     const revs = revisions.filter(r => String(r.posting_id) === posting.id).sort((a, b) => Number(a.revision_no) - Number(b.revision_no));
@@ -174,28 +191,30 @@ async function detail(store, id) {
       revisions: history,
       visibility: { ...p.visibilityState(visEvents), events: visEvents.slice().reverse() },
       plan_events: planList.slice().reverse(),
-      records: postingRecords.slice().reverse(),
-      category_records: categoryRecords.slice().reverse(),
+      // 日別データ（daily）は詳細画面で使わないため返さない（一覧・詳細の読み取りでは読まない）
+      records: postingRecords.slice().reverse().map(withoutDaily),
+      category_records: categoryRecords.slice().reverse().map(withoutDaily),
       improvements: p.improvementTimeline({ revisions: revs, records: [...postingRecords, ...categoryRecords], planEvents: planList }),
       csv: csvInfo(recs, posting.id),
     };
-  });
+  }
 }
 
 // 応募数・採用数の対象者（氏名・応募日・応募経路・現在の選考状態）。ログイン利用者のみ（部長会トークンでは使えない）
 async function candidates(store, id, kind) {
   const p = await ensureReady(store);
   if (!["applied", "hired"].includes(kind)) throw p.postingError(400, "対象が正しくありません");
-  return store.transaction(async tx => {
-    const posting = (await tx.listPostings()).find(x => String(x.id) === String(id));
+  {
+    const data = await readData(store, ["postings", "candidates", "links", "selectionEvents"]);
+    const posting = data.postings.find(x => String(x.id) === String(id));
     if (!posting) throw p.postingError(404, "求人が見つかりません");
-    const people = (await applicantsByPosting(tx)).get(String(posting.id)) || [];
+    const people = applicantsByPosting(data).get(String(posting.id)) || [];
     const list = people.filter(x => kind === "applied" || x.state.hired).map(({ candidate: c, state }) => ({
       id: String(c.id), name: c.name_kanji || "（氏名未登録）", applied_date: flow.ymd(c.applied_at),
       source_type: c.source_type || null, agent_name: c.agent_name || null, selection_label: state.label, hired: state.hired, archived: c.is_deleted === true,
     })).sort((a, b) => String(b.applied_date || "").localeCompare(String(a.applied_date || "")) || Number(b.id) - Number(a.id));
     return { posting_id: String(posting.id), kind, candidates: list };
-  });
+  }
 }
 
 // ---------- 求人の登録・修正・公開状態 ----------
@@ -211,8 +230,12 @@ async function createPosting(store, body, actor) {
   return store.transaction(async tx => {
     await tx.lock();
     if (!(await tx.listCategories()).some(c => String(c.id) === head.category_id)) throw p.postingError(400, "職種が見つかりません");
+    const postings = await tx.listPostings();
+    // 登録済みの求人と表記だけが違う媒体名は、登録済みの表記にそろえる（表記揺れによる媒体の重複を防ぐ）
+    head.media = p.canonicalMedia(head.media, postings.map(x => x.media));
     const external_key = p.externalKeyFor(head.job_id, randomKey());
-    const dup = (await tx.listPostings()).find(x => x.media === head.media && x.external_key === external_key);
+    // 既存の求人は、表記だけが違う媒体名（例：「求人 ボックス」）でも同じ媒体として重複を判定する（既存の値は書き換えない）
+    const dup = postings.find(x => p.mediaMatchKey(x.media) === p.mediaMatchKey(head.media) && x.external_key === external_key);
     if (dup) throw p.postingError(409, `この媒体・求人IDの求人は既に登録されています（${dup.title || dup.job_id}）`, { code: "duplicate", posting_id: String(dup.id) });
     const posting = await tx.insertPosting({ category_id: head.category_id, media: head.media, external_key, job_id: head.job_id, title: rev.title, actor });
     await tx.insertRevision({ ...rev, posting_id: posting.id, revision_no: 1, actor });
@@ -267,10 +290,11 @@ async function setVisibility(store, id, body, actor) {
 async function candidateLink(store, candidateId) {
   const p = await lib();
   if (!(await store.ready())) return { ready: false, current: null, history: [] };
-  return store.transaction(async tx => {
-    const links = (await tx.listLinks()).filter(l => String(l.candidate_id) === String(candidateId)).sort((a, b) => Number(a.seq) - Number(b.seq));
-    const postings = await tx.listPostings();
-    const revisions = latestBy(await tx.listRevisions(), "posting_id", "revision_no");
+  {
+    const data = await readData(store, ["links", "postings", "revisions"]);
+    const links = data.links.filter(l => String(l.candidate_id) === String(candidateId)).sort((a, b) => Number(a.seq) - Number(b.seq));
+    const postings = data.postings;
+    const revisions = latestBy(data.revisions, "posting_id", "revision_no");
     const label = pid => {
       if (pid == null) return null;
       const x = postings.find(q => String(q.id) === String(pid));
@@ -279,7 +303,7 @@ async function candidateLink(store, candidateId) {
     const history = links.map((l, i) => ({ id: String(l.id), seq: Number(l.seq), posting: label(l.posting_id), previous: i ? label(links[i - 1].posting_id) : null, reason: l.reason || null, actor: l.actor || null, created_at: l.created_at }));
     const last = links[links.length - 1] || null;
     return { ready: true, link_id: last ? String(last.id) : null, current: last ? label(last.posting_id) : null, history: history.reverse(), media: p.mediaOptions(postings) };
-  });
+  }
 }
 
 // 応募者の保存（基本情報のPUT・新規登録のPOST）と同じトランザクション内で呼ぶ。応募者の行はロック済みであること。

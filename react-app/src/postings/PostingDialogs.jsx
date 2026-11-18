@@ -1,8 +1,8 @@
 // 求人一覧・求人詳細のダイアログ（求人の登録・内容の修正・公開／非公開の切替・応募者一覧）。
 import React, { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { MEDIA, OTHER_MEDIA, REVISION_FIELDS, VISIBILITY, isDate, mediaKey, todayTokyo } from "../../../shared/jobPostings.mjs";
-import { Modal, MIN_DATE, MAX_DATE } from "../marketing/MarketingForms";
+import { MEDIA, OTHER_MEDIA, REVISION_FIELDS, VISIBILITY, canonicalMedia, isDate, mediaKey, similarMedia, todayTokyo } from "../../../shared/jobPostings.mjs";
+import { CategoryManager, Modal, MIN_DATE, MAX_DATE } from "../marketing/MarketingForms";
 import { postingsApi, errorText } from "./postingsApi";
 
 const EMPLOYMENT_TYPES = ["正社員", "パート・アルバイト", "派遣", "契約社員", "委託"];
@@ -47,6 +47,8 @@ function MediaSelect({ value, onChange, options }) {
   const list = options?.length ? options : MEDIA.map(m => m.name);
   const known = !value || list.includes(value);
   const [other, setOther] = useState(!known);
+  const same = other && value ? canonicalMedia(value, list) : null;
+  const near = other && value && !list.includes(same) ? similarMedia(value, list) : [];
   return (
     <>
       <select className="jm-input" value={other ? OTHER_MEDIA : value} onChange={e => {
@@ -56,14 +58,24 @@ function MediaSelect({ value, onChange, options }) {
         {list.map(m => <option key={m} value={m}>{m}</option>)}
         <option value={OTHER_MEDIA}>その他（入力）</option>
       </select>
-      {other && <input className="jm-input" maxLength={50} placeholder="媒体名" value={value} onChange={e => onChange(e.target.value)} aria-label="媒体名" />}
+      {other && <input className="jm-input" maxLength={50} placeholder="新しい媒体名（例：求人ボックス）" value={value} onChange={e => onChange(e.target.value)} aria-label="媒体名" />}
+      {other && same && list.includes(same) && (
+        <span className="jp-media-hint">「{same}」として登録されます（表記をそろえます）。<button type="button" className="jm-link" onClick={() => { setOther(false); onChange(same); }}>選択肢から選ぶ</button></span>
+      )}
+      {near.length > 0 && (
+        <span className="jp-media-hint">登録済みの媒体：{near.map(n => <button key={n} type="button" className="jm-link" onClick={() => { setOther(false); onChange(n); }}>{n}</button>)}（同じ媒体なら選んでください）</span>
+      )}
     </>
   );
 }
 
-export function NewPostingDialog({ categories, media, onClose, onSaved }) {
+export function NewPostingDialog({ categories, media, onClose, onSaved, onCategoriesChanged }) {
   const today = todayTokyo();
   const [form, setForm] = useState({ ...emptyRevision(), category_id: "", media: "", job_id: "", visibility: "public", effective_date: today });
+  // 職種は求人分析の「職種の管理」と同じマスタ。「＋」で職種の管理を開き、追加した職種を選択済みにする（入力中の内容は保持）
+  const [cats, setCats] = useState(categories);
+  const [catOpen, setCatOpen] = useState(false);
+  useEffect(() => { setCats(categories); }, [categories]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const set = (k, v) => { setForm(f => ({ ...f, [k]: v })); setError(""); };
@@ -83,12 +95,17 @@ export function NewPostingDialog({ categories, media, onClose, onSaved }) {
     if (res.ok) onSaved(res.data.id); else setError(errorText(res, "登録できませんでした"));
   }
   return (
-    <Modal title="求人を登録" onClose={onClose} wide>
+    <Modal title="求人を登録" onClose={onClose} wide escape={!catOpen}>
       <div className="jm-form-grid">
-        <label>職種<select className="jm-input" value={form.category_id} onChange={e => set("category_id", e.target.value)}>
-          <option value="">選択してください</option>
-          {categories.map(c => <option key={c.id} value={c.id}>{c.name}{c.is_active ? "" : "（募集停止中）"}</option>)}
-        </select></label>
+        <label>職種
+          <span className="jp-select-add">
+            <select className="jm-input" value={form.category_id} onChange={e => set("category_id", e.target.value)}>
+              <option value="">選択してください</option>
+              {cats.map(c => <option key={c.id} value={c.id}>{c.name}{c.is_active ? "" : "（募集停止中）"}</option>)}
+            </select>
+            <button type="button" className="jm-btn is-small jp-add-btn" aria-label="職種を追加（職種の管理）" title="職種を追加（職種の管理）" onClick={() => setCatOpen(true)}>＋</button>
+          </span>
+        </label>
         <label>掲載媒体<MediaSelect value={form.media} options={media} onChange={v => set("media", v)} /></label>
         <label className="is-span">求人ID・参照番号（任意）
           <input className="jm-input" maxLength={200} value={form.job_id} onChange={e => set("job_id", e.target.value)} placeholder="Indeedの参照番号、ハローワークの求人番号など" />
@@ -111,11 +128,21 @@ export function NewPostingDialog({ categories, media, onClose, onSaved }) {
         <button type="button" className="jm-btn" onClick={onClose}>キャンセル</button>
         <button type="button" className="jm-btn is-primary" disabled={busy} onClick={submit}>登録する</button>
       </div>
+      {catOpen && (
+        <CategoryManager categories={cats} onClose={() => setCatOpen(false)}
+          onSaved={() => onCategoriesChanged?.().then(list => { if (Array.isArray(list)) setCats(list); })}
+          onCreated={created => {
+            if (!created?.id) return;
+            setCats(list => list.some(c => String(c.id) === String(created.id)) ? list : [...list, { id: String(created.id), name: created.name, is_active: true }]);
+            set("category_id", String(created.id));
+            setCatOpen(false);
+          }} />
+      )}
     </Modal>
   );
 }
 
-// 求人内容の修正（新しい版を追加）。初版未登録の求人は、CSVの確認済み情報（求人名・URL）を初期値にする
+// 求人原稿の登録・編集（保存のたびに新しい版を追加し、前の版は修正履歴に残す）。原稿が未登録の求人は、CSVの確認済み情報（求人名・URL）を初期値にする
 export function RevisionDialog({ detail, onClose, onSaved }) {
   const current = detail.current;
   const csv = detail.csv;
@@ -136,7 +163,7 @@ export function RevisionDialog({ detail, onClose, onSaved }) {
     else { setError(errorText(res, "保存できませんでした")); setStale(res.status === 409); }
   }
   return (
-    <Modal title={current ? `求人内容を修正（第${current.revision_no + 1}版として保存）` : "求人内容の初版を登録"} onClose={onClose} wide>
+    <Modal title={current ? `求人原稿を編集（第${current.revision_no + 1}版として保存）` : "求人原稿を登録"} onClose={onClose} wide>
       {!current && (csv || detail.posting.csv_title) && <p className="jm-sub is-info">CSVの確認済みの情報（求人名{csv?.job_url ? "・求人URL" : ""}）を入力済みです。その他の項目は推測で補完していません。</p>}
       <RevisionFields form={form} set={set} />
       {current && (
@@ -149,7 +176,7 @@ export function RevisionDialog({ detail, onClose, onSaved }) {
       <div className="jm-actions">
         {stale && <button type="button" className="jm-btn" onClick={() => window.location.reload()}>画面を読み込み直す</button>}
         <button type="button" className="jm-btn" onClick={onClose}>キャンセル</button>
-        <button type="button" className="jm-btn is-primary" disabled={busy} onClick={submit}>{current ? "修正を保存" : "初版を登録"}</button>
+        <button type="button" className="jm-btn is-primary" disabled={busy} onClick={submit}>{current ? "新しい版として保存" : "求人原稿を登録"}</button>
       </div>
     </Modal>
   );

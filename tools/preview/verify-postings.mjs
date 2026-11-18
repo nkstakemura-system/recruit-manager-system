@@ -130,14 +130,27 @@ try {
   ok("初期表示は公開中の求人だけ", JSON.stringify(await evaluate("__rows()")) === JSON.stringify([AIR, HW]), JSON.stringify(await evaluate("__rows()")));
   ok("切替の件数：公開中2・非公開1・すべて5・要設定2", JSON.stringify(await evaluate(`["公開中", "非公開", "すべて", "要設定"].map(__tabCount)`)) === "[2,1,5,2]");
   ok("要設定の件数と確認導線を表示", await evaluate(`__q(".jp-unset").innerText.includes("要設定 2件") && !!__btn("確認する", __q(".jp-unset"))`));
-  ok("列：求人タイトル・職種／掲載媒体／応募者数／採用数／公開状態／詳細", await evaluate(`__q(".jp-head").innerText.replace(/\\?/g, "").replace(/\\s+/g, " ").trim() === "求人タイトル・職種 掲載媒体 応募者数 採用数 公開状態 詳細"`), await evaluate(`__q(".jp-head").innerText.replace(/\\s+/g, " ")`));
+  ok("列：求人タイトル・職種／掲載媒体／応募者数／採用数／公開状態／操作（公開切替・詳細）", await evaluate(`__q(".jp-head").innerText.replace(/\\?/g, "").replace(/\\s+/g, " ").trim() === "求人タイトル・職種 掲載媒体 応募者数 採用数 公開状態 操作"`), await evaluate(`__q(".jp-head").innerText.replace(/\\s+/g, " ")`));
   const hwRow = await evaluate(`(() => { const r = __row(${JSON.stringify(HW)}); return { text: r.innerText.replace(/\\s+/g, " "), counts: [...r.querySelectorAll(".jp-count")].map(x => x.textContent) }; })()`);
-  ok("ハローワークの求人：職種・媒体・求人番号・応募者3・採用0・公開中", hwRow.text.includes("電気工事士") && hwRow.text.includes("ハローワーク") && hwRow.text.includes("00000-00000001") && hwRow.counts.join() === "3,0" && hwRow.text.includes("公開中"), hwRow.text);
+  ok("ハローワークの求人：職種・媒体・応募者3・採用0・公開中（一覧に求人番号は表示しない）", hwRow.text.includes("電気工事士") && hwRow.text.includes("ハローワーク") && !hwRow.text.includes("00000-00000001") && hwRow.counts.join() === "3,0" && hwRow.text.includes("公開中"), hwRow.text);
+  // 列の位置：応募者数・採用数の数字（0 を含む）が各列の中央にそろい、右側のボタンの高さ・文字サイズがそろっている
+  const layout = await evaluate(`(() => {
+    const center = el => { const r = el.getBoundingClientRect(); return r.left + r.width / 2; };
+    const head = __qa(".jp-head > span"); const rows = __qa(".jp-row:not(.jp-head)");
+    const off = col => Math.max(...rows.map(r => Math.abs(center(r.children[col].querySelector(".jp-count")) - center(head[col]))));
+    const btns = rows.flatMap(r => [...r.querySelectorAll(".jp-actions-cell .jm-btn")]);
+    const hs = new Set(btns.map(b => Math.round(b.getBoundingClientRect().height))); const fs = new Set(btns.map(b => getComputedStyle(b).fontSize));
+    const detailX = new Set(rows.map(r => Math.round(r.querySelector(".jp-detail-btn").getBoundingClientRect().right)));
+    return { apply: off(2), hire: off(3), heights: [...hs], fonts: [...fs], detailX: [...detailX], ids: __qa(".jp-id").length };
+  })()`);
+  ok("一覧：応募者数・採用数の数字（0を含む）が列の中央にそろう", layout.apply <= 1 && layout.hire <= 1, JSON.stringify(layout));
+  ok("一覧：右側のボタンの高さ・文字サイズ・位置がそろう", layout.heights.length === 1 && layout.fonts.length === 1 && layout.detailX.length === 1 && layout.ids === 0, JSON.stringify(layout));
   ok("応募者数には「CSVの応募数とは別」の説明がある", await evaluate(`[...document.querySelectorAll(".jp-head .jm-tip")].some(t => t.dataset.tip.includes("CSVの応募数とは別"))`));
   await shot("01-list-public-pc");
   await evaluate(`__click("確認する")`);
   await waitFor(`location.search.includes("view=unset")`, "unset view");
-  ok("「確認する」で要設定の求人（初版未登録）を表示", JSON.stringify(await evaluate("__rows()")) === JSON.stringify([CSV1, CSV2]) && await evaluate(`__qa(".jp-row .jp-vis.is-unset").length === 2 && __qa(".jp-row .jp-mini").filter(x => x.textContent === "初版未登録").length === 2`));
+  ok("「確認する」で要設定の求人（原稿未登録）を表示", JSON.stringify(await evaluate("__rows()")) === JSON.stringify([CSV1, CSV2]) && await evaluate(`__qa(".jp-row .jp-vis.is-unset").length === 2 && __qa(".jp-row button.jp-flag").filter(x => x.textContent === "原稿未登録").length === 2`));
+  ok("状態の表示：押せるもの（原稿未登録・掲載種別未設定・実績あり）だけがボタン／リンク、掲載種別は押せない表示", await evaluate(`__qa(".jp-row .jp-flag").every(x => ["BUTTON", "A"].includes(x.tagName)) && __qa(".jp-row .jp-sub .jm-dot").every(x => x.tagName === "SPAN" && !x.onclick)`));
   await evaluate(`__tab("すべて")`);
   await evaluate(`__set(__q(".jp-media select"), "Indeed")`);
   await waitFor(`location.search.includes("media=Indeed") && location.search.includes("view=all")`, "media filter");
@@ -147,7 +160,7 @@ try {
   await evaluate(`__set(__q(".jp-media select"), "")`);
 
   // 2. 公開／非公開
-  await evaluate(`__row(${JSON.stringify(CSV1)}).querySelector(".jp-vis-cell button").click()`);
+  await evaluate(`__row(${JSON.stringify(CSV1)}).querySelector(".jp-actions-cell button").click()`);
   await waitFor("!!__modal()", "visibility dialog");
   ok("未設定の求人：「公開状態を設定」ダイアログ（公開中／非公開を選ぶ）", await evaluate(`__modal().innerText.includes("公開状態を設定") && __qa("input[type=radio]", __modal()).length === 2 && __modal().innerText.includes("外部サイトの掲載は変更されません")`));
   await evaluate(`__radio("公開中", __modal())`);
@@ -155,19 +168,19 @@ try {
   await evaluate(`__click("設定する", __modal())`);
   await waitFor(`!__modal() && !!__q(".jm-ok")`, "set public");
   ok("要設定→公開中に設定（要設定は1件に）", await evaluate(`__tabCount("要設定") === 1 && __row(${JSON.stringify(CSV1)}).innerText.includes("公開中") && __row(${JSON.stringify(CSV1)}).innerText.includes("2026/10/01〜")`));
-  await evaluate(`__row(${JSON.stringify(HW)}).querySelector(".jp-vis-cell button").click()`);
+  await evaluate(`__row(${JSON.stringify(HW)}).querySelector(".jp-actions-cell button").click()`);
   await waitFor("!!__modal()", "private dialog");
   ok("非公開への切替：「この求人を非公開にしますか？」と キャンセル／はい", await evaluate(`__modal().innerText.startsWith("この求人を非公開にしますか？") && !!__btn("キャンセル", __modal()) && !!__btn("はい", __modal())`));
   await shot("02-private-confirm");
   await evaluate(`__click("キャンセル", __modal())`);
   ok("キャンセルでは変更しない", await evaluate(`!__modal() && __row(${JSON.stringify(HW)}).innerText.includes("公開中")`));
-  await evaluate(`__row(${JSON.stringify(HW)}).querySelector(".jp-vis-cell button").click()`);
+  await evaluate(`__row(${JSON.stringify(HW)}).querySelector(".jp-actions-cell button").click()`);
   await waitFor("!!__modal()", "private dialog 2");
   await evaluate(`__set(__field("理由（任意）", __modal()), "検証：採用予定数に達した")`);
   await evaluate(`__click("はい", __modal())`);
   await waitFor(`!__modal() && __row(${JSON.stringify(HW)}).innerText.includes("非公開")`, "set private");
-  ok("「はい」で非公開に（ボタンは「公開する」に変わる）", await evaluate(`__row(${JSON.stringify(HW)}).querySelector(".jp-vis-cell button").textContent === "公開する"`));
-  await evaluate(`__row(${JSON.stringify(HW)}).querySelector(".jp-vis-cell button").click()`);
+  ok("「はい」で非公開に（ボタンは「公開する」に変わる）", await evaluate(`__row(${JSON.stringify(HW)}).querySelector(".jp-actions-cell button").textContent === "公開する"`));
+  await evaluate(`__row(${JSON.stringify(HW)}).querySelector(".jp-actions-cell button").click()`);
   await waitFor("!!__modal()", "public dialog");
   ok("公開へ戻す操作は「この求人を公開しますか？」「公開する」", await evaluate(`__modal().innerText.startsWith("この求人を公開しますか？") && !!__btn("公開する", __modal())`));
   await evaluate(`__click("公開する", __modal())`);
@@ -205,7 +218,7 @@ try {
   // 4. 求人詳細
   await go(app + "/jobs/3", "!!document.querySelector('.jp-detail-head')", "detail");
   const head = await evaluate(`__q(".jp-detail-head").innerText.replace(/\\s+/g, " ")`);
-  ok("詳細の上部：タイトル・職種・媒体・求人ID・公開状態・掲載種別・版・主要操作", [HW, "電気工事士", "ハローワーク", "00000-00000001", "公開中", "無料掲載", "第2版", "求人内容を修正", "非公開にする", "求人分析で見る", "応募者数", "採用数"].every(t => head.includes(t)), head);
+  ok("詳細の上部：タイトル・職種・媒体・求人ID・公開状態・掲載種別・版・主要操作", [HW, "電気工事士", "ハローワーク", "00000-00000001", "公開中", "無料掲載", "第2版", "求人原稿を編集", "非公開にする", "求人分析で見る", "応募者数", "採用数"].every(t => head.includes(t)), head);
   ok("求人内容：勤務地・雇用形態・給与・勤務時間・休日・求人担当者・全文", await evaluate(`(() => { const t = __section("求人内容").innerText; return ["勤務地", "架空県架空市", "雇用形態", "給与条件", "月給27万円", "勤務時間", "休日", "求人担当者", "資格手当あり。"].every(x => t.includes(x)); })()`));
   ok("全文は改行を保ったまま表示し、コピーできる", await evaluate(`__q(".jp-body").textContent.split("\\n").length === 5 && !!__btn("全文をコピー")`));
   ok("公開状態の履歴：変更前→変更後・日付・理由・操作者・公開期間", await evaluate(`(() => { const t = __section("公開状態の履歴").innerText; return t.includes("未設定 → 公開中") && t.includes("公開中 → 非公開") && t.includes("非公開 → 公開中") && t.includes("理由：検証：採用予定数に達した") && t.includes("preview@web") && t.includes("公開期間"); })()`));
@@ -213,30 +226,30 @@ try {
   await evaluate(`__qa(".jp-fold-section").forEach(d => d.open = true)`);
   const rev = await evaluate(`__section("修正履歴").innerText.replace(/\\s+/g, " ")`);
   ok("修正履歴：第2版の修正内容・理由と、給与の修正前／修正後", rev.includes("第2版") && rev.includes("修正内容：給与を2万円引き上げ、資格手当を追記") && rev.includes("修正理由：応募が少ないため（架空）") && rev.includes("月給25万円〜35万円") && rev.includes("月給27万円〜37万円（資格手当込み）"), rev.slice(0, 200));
-  ok("改善履歴：求人内容の修正メモと掲載状態のメモを時系列で表示", await evaluate(`(() => { const t = __section("改善履歴").innerText; return t.includes("求人内容の修正（第2版）") && t.includes("掲載状態の変更メモ") && t.includes("ハローワークは無料掲載"); })()`));
+  ok("改善履歴：求人内容の修正メモと掲載状態のメモを時系列で表示", await evaluate(`(() => { const t = __section("改善履歴").innerText; return t.includes("求人原稿の修正（第2版）") && t.includes("掲載状態の変更メモ") && t.includes("ハローワークは無料掲載"); })()`));
   await shot("04-detail-pc");
 
   // 4-2. 修正（新しい版）と古い画面
-  await evaluate(`__click("求人内容を修正")`);
+  await evaluate(`__click("求人原稿を編集")`);
   await waitFor("!!__modal()", "revision dialog");
   ok("修正ダイアログ：現在の内容を初期値にし、詳細項目は折り畳み", await evaluate(`__field("求人タイトル", __modal()).value === ${JSON.stringify(HW)} && !!__q("details.jp-fold", __modal()) && __q("textarea.jp-body-input", __modal()).value.includes("資格手当あり。")`));
   await evaluate(`__set(__q("textarea.jp-body-input", __modal()), __q("textarea.jp-body-input", __modal()).value + "\\n（検証）賞与年2回。")`);
-  await evaluate(`__click("修正を保存", __modal())`);
+  await evaluate(`__click("新しい版として保存", __modal())`);
   ok("修正内容が空なら保存しない", await evaluate(`__modal().innerText.includes("修正内容を入力してください")`));
   // 別の画面で先に修正された場合
   const other = await api("/api/job-postings/3/revisions", "POST", { expected_revision_no: 2, title: "架空：電気工事士（太陽光・蓄電池）", body: "別画面の修正", change_summary: "別画面" });
   await evaluate(`__set(__field("修正内容", __modal()), "賞与を追記")`);
-  await evaluate(`__click("修正を保存", __modal())`);
+  await evaluate(`__click("新しい版として保存", __modal())`);
   await waitFor(`__modal().innerText.includes("他の画面で求人内容が修正されています")`, "stale revision");
   ok("古い画面からの修正は409（今回の内容は保存しない・読み込み直しボタン）", other.status === 200 && await evaluate(`!!__btn("画面を読み込み直す", __modal())`));
   await go(app + "/jobs/3", "!!document.querySelector('.jp-detail-head')", "detail reload");
   ok("読み込み直すと第3版（別画面の修正）", await evaluate(`__q(".jp-detail-head").innerText.includes("第3版")`));
-  await evaluate(`__click("求人内容を修正")`);
+  await evaluate(`__click("求人原稿を編集")`);
   await waitFor("!!__modal()", "revision dialog 2");
   await evaluate(`__set(__field("給与条件", __modal()), "月給28万円〜（検証）")`);
   await evaluate(`__set(__field("修正内容", __modal()), "給与を修正（検証）")`);
   await evaluate(`__set(__field("修正理由（任意）", __modal()), "検証")`);
-  await evaluate(`__click("修正を保存", __modal())`);
+  await evaluate(`__click("新しい版として保存", __modal())`);
   await waitFor(`!__modal() && __q(".jp-detail-head").innerText.includes("第4版")`, "rev 4");
   ok("修正を保存すると第4版（前の版は修正履歴に残る）", await evaluate(`(() => { __qa(".jp-fold-section").forEach(d => d.open = true); const t = __section("修正履歴").innerText; return ["第4版", "第3版", "第2版", "第1版"].every(x => t.includes(x)) && t.includes("月給28万円〜（検証）"); })()`));
 
@@ -259,14 +272,18 @@ try {
 
   // 4-4. CSV由来の求人（初版未登録）
   await go(app + "/jobs/2", "!!document.querySelector('.jp-detail-head')", "csv detail");
-  ok("CSV由来の求人：初版未登録として確認済みの情報だけを表示", await evaluate(`__q(".jp-detail-head").innerText.includes("初版未登録") && __section("求人内容").innerText.includes("求人内容は未登録です") && __section("求人内容").innerText.includes("fictional-cad-001")`));
-  await evaluate(`__click("初版を登録")`);
+  ok("CSV由来の求人：原稿未登録として確認済みの情報だけを表示（求人IDは詳細に表示）", await evaluate(`__q(".jp-detail-head").innerText.includes("原稿未登録") && __q(".jp-detail-head").innerText.includes("fictional-cad-001") && __section("求人内容").innerText.includes("求人原稿は未登録です")`));
+  await evaluate(`__click("求人原稿を登録")`);
   await waitFor("!!__modal()", "first revision");
-  ok("初版登録：確認済みの求人名だけを引き継ぎ、他は推測で補完しない", await evaluate(`__field("求人タイトル", __modal()).value === ${JSON.stringify(CSV2)} && __q("textarea.jp-body-input", __modal()).value === "" && !__field("修正内容", __modal())`));
+  ok("求人原稿の登録：確認済みの求人名だけを引き継ぎ、他は推測で補完しない", await evaluate(`__field("求人タイトル", __modal()).value === ${JSON.stringify(CSV2)} && __q("textarea.jp-body-input", __modal()).value === "" && !__field("修正内容", __modal())`));
   await evaluate(`__set(__q("textarea.jp-body-input", __modal()), "架空の求人内容（初版）\\n2行目")`);
-  await evaluate(`__click("初版を登録", __modal())`);
+  await evaluate(`__click("求人原稿を登録", __modal())`);
   await waitFor(`!__modal() && __q(".jp-detail-head").innerText.includes("第1版")`, "first revision saved");
-  ok("初版を登録すると第1版", true);
+  ok("求人原稿を登録すると第1版になり「原稿未登録」が消える", await evaluate(`!__q(".jp-detail-head").innerText.includes("原稿未登録") && __text(__q(".jp-detail-actions")).includes("求人原稿を編集")`));
+  await evaluate(`__click("← 求人一覧へ戻る")`);
+  await waitFor(`location.pathname === "/jobs" && !!document.querySelector(".jp-list")`, "list after first revision");
+  await evaluate(`__tab("すべて")`);
+  ok("一覧へ戻っても「原稿未登録」が残らない", await evaluate(`!__row(${JSON.stringify(CSV2)}).innerText.includes("原稿未登録")`));
 
   // 5. 求人の新規登録（ハローワーク）
   await go(app + "/jobs", "!!document.querySelector('.jp-list')", "jobs 2");
@@ -381,7 +398,7 @@ try {
   // 8-2. 往復の戻り導線：絞り込み一覧 → 求人詳細 → 応募者詳細 → 求人詳細 → 一覧（絞り込みを保持。P1-04）
   await go(app + "/jobs?view=all&media=%E3%83%8F%E3%83%AD%E3%83%BC%E3%83%AF%E3%83%BC%E3%82%AF", "!!document.querySelector('.jp-list')", "filtered list");
   const filtered = await evaluate("location.pathname + location.search");
-  await evaluate(`__row(${JSON.stringify(HW)}).querySelector(".jp-detail-cell button").click()`);
+  await evaluate(`__row(${JSON.stringify(HW)}).querySelector(".jp-detail-btn").click()`);
   await waitFor(`location.pathname === "/jobs/3" && !!document.querySelector(".jp-detail-head")`, "detail from list");
   await evaluate(`__q(".jp-detail-counts .jp-count").click()`);
   await waitFor(`__modal() && __modal().querySelectorAll(".jp-name").length > 0`, "detail people");
@@ -455,6 +472,89 @@ try {
   const sales = await kpiOf("営業");
   ok("無料／有料比較：営業の10月（無料→有料）は従来どおり表示", sales.compare === true);
   await shot("11-marketing-compare");
+
+  // 8-5. 状態の表示から該当の操作へ（実績あり→求人分析の対象求人、掲載種別未設定→掲載状態の変更、原稿未登録→求人原稿の登録）
+  await go(app + "/jobs?view=all", "!!document.querySelector('.jp-list')", "list for flags");
+  const flagsUrl = await evaluate("location.pathname + location.search");
+  await evaluate(`[...__row(${JSON.stringify(HW)}).querySelectorAll(".jp-flag")].find(x => x.textContent === "実績あり").click()`);
+  await waitFor(`location.pathname === "/job-marketing" && !!document.querySelector(".jm-kpis")`, "analysis from flag");
+  await waitFor(`!!document.querySelector(".jm-postings li.is-focus")`, "focused posting").catch(() => null);
+  const focus = await evaluate(`({ tab: document.querySelector(".jm-tab.is-on").firstChild.textContent, month: __q(".jm-bar .jm-month select").value,
+    open: !!__q(".jm-postings")?.open, focus: __q(".jm-postings li.is-focus")?.innerText.includes(${JSON.stringify(HW)}), back: !!__q(".jm-back-link") })`);
+  ok("「実績あり」→ 求人分析で対象の職種・月を開き、求人原稿の内訳で対象を強調", focus.tab === "電気工事士" && focus.month === "2025-10" && focus.open && focus.focus && focus.back, JSON.stringify(focus));
+  await evaluate(`__q(".jm-back-link").click()`);
+  await waitFor(`location.pathname.startsWith("/jobs/") && !!document.querySelector(".jp-detail-head")`, "back to detail from analysis");
+  ok("求人分析の「求人詳細へ戻る」で求人詳細へ", await evaluate(`__q(".jp-detail-head h2").textContent === ${JSON.stringify(HW)}`));
+  await evaluate(`__click("← 求人一覧へ戻る")`);
+  await waitFor(`location.pathname === "/jobs" && !!document.querySelector(".jp-list")`, "back to list from analysis");
+  ok("さらに「求人一覧へ戻る」で元の絞り込みに戻る", (await evaluate("location.pathname + location.search")) === flagsUrl, flagsUrl);
+  await evaluate(`[...__row(${JSON.stringify(AIR)}).querySelectorAll(".jp-flag")].find(x => x.textContent === "掲載種別未設定").click()`);
+  await waitFor(`!!__modal() && __modal().innerText.includes("掲載状態の変更")`, "plan dialog from flag");
+  ok("「掲載種別未設定」→ 求人詳細で掲載状態の変更を、この求人を選んだ状態で開く", await evaluate(`__q("select", __modal()).value === location.pathname.split("/").pop() && !location.search.includes("open=")`));
+  await evaluate(`__q(".jm-close", __modal()).click()`);
+  await go(app + "/jobs?view=all", "!!document.querySelector('.jp-list')", "list for revision flag");
+  await evaluate(`[...__row(${JSON.stringify(CSV1)}).querySelectorAll(".jp-flag")].find(x => x.textContent === "原稿未登録").click()`);
+  await waitFor(`!!__modal() && __modal().innerText.startsWith("求人原稿を登録")`, "revision dialog from flag");
+  ok("「原稿未登録」→ 求人詳細で求人原稿の登録を開く", true);
+  await evaluate(`__q(".jm-close", __modal()).click()`);
+
+  // 月をまたぐ実績（この月の集計には含めない記録）が対象の場合も、内訳を開いて強調する（U1-02）
+  const airRow = (await api("/api/job-postings")).data.postings.find(p => p.title === AIR);
+  const span = await api("/api/job-marketing/records", "POST", { record: { category_id: airRow.category_id, posting_id: airRow.id, media: "Indeed",
+    period_start: "2024-09-15", period_end: "2024-10-15", plan_type: "free", impressions: 50, clicks: 4, apply_starts: 0, applies: 0 } });
+  await go(app + `/job-marketing?category=${airRow.category_id}&posting=${airRow.id}`, "!!document.querySelector('.jm-kpis') || !!document.querySelector('.jm-empty')", "analysis spanning");
+  await waitFor(`!!document.querySelector(".jm-posting-spanning li.is-focus")`, "spanning focus").catch(() => null);
+  ok("月をまたぐ実績が対象でも、求人原稿の内訳を開いて対象を強調", span.status === 200 && await evaluate(`__q(".jm-bar .jm-month select").value === "2024-09" && !!__q(".jm-postings")?.open && !!__q(".jm-posting-spanning li.is-focus")`),
+    await evaluate(`__q(".jm-bar .jm-month select").value + " " + !!__q(".jm-postings")`));
+
+
+  // 8-6. 職種の「＋」：求人分析と同じ職種マスタに追加し、選択済みにする（入力中の内容は保持）。重複は既存の仕組みで防ぐ
+  await go(app + "/jobs", "!!document.querySelector('.jp-list')", "list for new");
+  await evaluate(`__click("＋ 求人を登録")`);
+  await waitFor("!!__modal()", "new dialog 2");
+  await evaluate(`__set(__field("求人タイトル", __modal()), "検証：職種と媒体の追加")`);
+  await evaluate(`__set(__q("textarea.jp-body-input", __modal()), "入力途中の原稿\\n・箇条書き")`);
+  await evaluate(`__q(".jp-add-btn", __modal()).click()`);
+  await waitFor(`__qa(".jm-modal").length === 2 && __qa(".jm-modal").at(-1).innerText.startsWith("職種の管理")`, "category manager");
+  const top = `__qa(".jm-modal").at(-1)`;
+  await evaluate(`__set(__q('input[aria-label="追加する職種名"]', ${top}), "検証職種")`);
+  await evaluate(`__click("追加", ${top})`);
+  await waitFor(`__qa(".jm-modal").length === 1`, "manager closed");
+  const picked = await evaluate(`(() => { const sel = __q(".jp-select-add select", __modal()); return { text: sel.selectedOptions[0]?.textContent, title: __field("求人タイトル", __modal()).value, body: __q("textarea.jp-body-input", __modal()).value }; })()`);
+  ok("「＋」で職種の管理を開き、追加した職種を選択済みにする（入力中のタイトル・原稿は保持）", picked.text === "検証職種" && picked.title === "検証：職種と媒体の追加" && picked.body.includes("・箇条書き"), JSON.stringify(picked));
+  await evaluate(`__q(".jp-add-btn", __modal()).click()`);
+  await waitFor(`__qa(".jm-modal").length === 2`, "category manager 2");
+  await evaluate(`__set(__q('input[aria-label="追加する職種名"]', ${top}), " 検証職種 ")`);
+  await evaluate(`__click("追加", ${top})`);
+  await waitFor(`${top}.innerText.includes("同じ名前の職種が既にあります")`, "duplicate category");
+  ok("同じ名前の職種は既存の仕組みで登録しない", true);
+  await evaluate(`__q(".jm-close", ${top}).click()`);
+  // 媒体：「その他（入力）」で新しい媒体名を入力して登録 → 以後の選択肢に表示
+  await evaluate(`__set(__field("掲載媒体", __modal()), "その他")`);
+  await waitFor(`!!__q('input[aria-label="媒体名"]', __modal())`, "other media input");
+  await evaluate(`__set(__q('input[aria-label="媒体名"]', __modal()), "求人ボックス")`);
+  await evaluate(`__click("登録する", __modal())`);
+  await waitFor(`location.pathname.startsWith("/jobs/") && !!document.querySelector(".jp-detail-head")`, "detail after new media");
+  const mk1 = await api("/api/job-marketing");
+  ok("追加した職種は求人分析の職種にも表示（同じマスタ）", mk1.data.categories.some(c => c.name === "検証職種") && await evaluate(`__q(".jp-detail-head").innerText.includes("検証職種") && __q(".jp-detail-head").innerText.includes("求人ボックス")`));
+  await go(app + "/jobs", "!!document.querySelector('.jp-list')", "list for media reuse");
+  await evaluate(`__click("＋ 求人を登録")`);
+  await waitFor("!!__modal()", "new dialog 3");
+  ok("新しく登録した媒体「求人ボックス」が次回から選択肢に出る", await evaluate(`[...__field("掲載媒体", __modal()).options].some(o => o.value === "求人ボックス")`));
+  await evaluate(`__set(__field("掲載媒体", __modal()), "その他")`);
+  await waitFor(`!!__q('input[aria-label="媒体名"]', __modal())`, "other media input 2");
+  await evaluate(`__set(__q('input[aria-label="媒体名"]', __modal()), "求人 ボックス")`);
+  ok("表記だけが違う媒体名は、登録済みの表記にそろえる旨を表示", await evaluate(`__modal().innerText.includes("「求人ボックス」として登録されます")`));
+  await evaluate(`__set(__q('input[aria-label="媒体名"]', __modal()), "ボックス")`);
+  ok("近い媒体名は登録済みの候補を表示（自動では置き換えない）", await evaluate(`__modal().innerText.includes("登録済みの媒体：") && __q('input[aria-label="媒体名"]', __modal()).value === "ボックス"`));
+  await evaluate(`__q(".jm-close", __modal()).click()`);
+  const dupMedia = await api("/api/job-postings", "POST", { category_id: "1", media: "求人 ボックス", title: "検証：表記揺れ" });
+  const afterMedia = (await api("/api/job-postings")).data;
+  ok("表記揺れの媒体名で登録しても、登録済みの「求人ボックス」にそろう（媒体が重複しない）", dupMedia.status === 200 && afterMedia.postings.find(p => p.id === dupMedia.data.id).media === "求人ボックス" && !afterMedia.media.includes("求人 ボックス"));
+  await go(app + "/register", "!!document.querySelector('input[name=name_kanji]')", "register media");
+  await evaluate(`__radio("求人")`);
+  await waitFor(`!!document.querySelector("select[name=agent_media]")`, "register media select");
+  ok("応募者登録の掲載媒体にも同じ表記（求人ボックス）が出る", await evaluate(`[...__q("select[name=agent_media]").options].some(o => o.value === "求人ボックス")`));
 
   // 9. スマホ表示
   viewport = { width: 390, height: 844, deviceScaleFactor: 2, mobile: true };

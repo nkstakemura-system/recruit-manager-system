@@ -2,7 +2,7 @@
 // * 媒体の表記揺れ（インディード等）は表示上だけ Indeed としてまとめる。利用者が媒体を選び直さない限り、保存されている媒体名は変更しない。
 // * 求人の選択は任意（「該当求人なし・不明」可）。非公開の求人も選べる。
 import React, { useEffect, useState } from "react";
-import { MEDIA, OTHER_MEDIA, VISIBILITY, mediaKey } from "../../../shared/jobPostings.mjs";
+import { MEDIA, OTHER_MEDIA, VISIBILITY, mediaKey, similarMedia } from "../../../shared/jobPostings.mjs";
 import { postingsApi } from "./postingsApi";
 
 // 求人一覧（選択肢）の読み込み。テーブル未作成時は ready:false（求人の選択欄を出さない）
@@ -57,6 +57,12 @@ export default function PostingPicker({ agentName, onMediaChange, postingId, onP
             if (current && mediaKey(current.media) !== mediaKey(e.target.value)) onPostingChange("");
           }} />
         </label>
+      )}
+      {/* 登録済みの媒体と表記が近い場合は候補を表示（選ぶまで入力値は変えない） */}
+      {other && agentName && similarMedia(agentName, list).length > 0 && (
+        <div className="nks-inline-note">登録済みの媒体：{similarMedia(agentName, list).map(n => (
+          <button key={n} type="button" className="jm-link" style={{ margin: "0 4px" }} onClick={() => { setOther(false); onMediaChange(n); if (current && mediaKey(current.media) !== n) onPostingChange(""); }}>{n}</button>
+        ))}（同じ媒体なら選んでください）</div>
       )}
       {rawDiffers && <div className="nks-inline-note">登録済みの媒体名「{agentName}」は「{selected}」として表示しています（保存されている値は変更しません）。</div>}
       {options.linkError && <div className="nks-inline-note">求人のひも付けを読み込めなかったため、求人は選択できません。画面を再読み込みしてください。</div>}

@@ -19,6 +19,21 @@ export function VisibilityButton({ posting, onClick }) {
   const label = posting.visibility === "public" ? "非公開にする" : posting.visibility === "private" ? "公開する" : "公開状態を設定";
   return <button type="button" className={`jm-btn is-small${posting.visibility == null ? " is-primary" : ""}`} onClick={onClick}>{label}</button>;
 }
+// 求人の状態（重要なものだけ。押せるものは該当の操作へ直接移動する。押せない表示はボタンの見た目にしない）
+// onOpen(kind)：revision＝求人原稿の登録、plan＝掲載状態の設定。analysisTo：求人分析へのリンク先（実績がある場合）
+export function PostingFlags({ posting, onOpen, analysisTo, analysisState }) {
+  return (
+    <>
+      {posting.revision_no === 0 && <button type="button" className="jp-flag is-action" onClick={() => onOpen("revision")}>原稿未登録</button>}
+      {posting.plan_status == null
+        ? <button type="button" className="jp-flag is-action" onClick={() => onOpen("plan")}>掲載種別未設定</button>
+        : <span className={`jm-dot is-${posting.plan_status}`}>{PLAN_STATUS[posting.plan_status]}</span>}
+      {posting.record_count > 0 && <Link className="jp-flag is-link" to={analysisTo} state={analysisState}>実績あり</Link>}
+    </>
+  );
+}
+export const analysisPath = p => `/job-marketing?category=${encodeURIComponent(p.category_id)}&posting=${encodeURIComponent(p.id)}`;
+
 export function CountButton({ value, label, onClick }) {
   return value > 0
     ? <button type="button" className="jp-count" aria-label={`${label} ${value}人の一覧`} onClick={onClick}>{value}</button>
@@ -105,7 +120,7 @@ export default function JobPostings() {
           <span role="columnheader" className="jp-num">応募者数<Tip text="この求人を応募経路として登録した応募者の人数です（選考終了・アーカイブを含み、協力業者は除く）。求人分析のCSVの応募数とは別です。" /></span>
           <span role="columnheader" className="jp-num">採用数<Tip text="現在の選考状態が内定・入社予定・入社の応募者です。内定辞退・不採用・内定の取消は含みません。入社後に退職した方は含みます。" /></span>
           <span role="columnheader">公開状態</span>
-          <span role="columnheader"><span className="jp-sr">詳細</span></span>
+          <span role="columnheader" className="jp-actions-head"><span className="jp-sr">操作</span></span>
         </div>
         {shown.length === 0 && <p className="jp-empty">{view === "public" ? "公開中の求人はありません。" : "該当する求人はありません。"}{view === "public" && counts.all > 0 ? "「すべて」から登録済みの求人を確認できます。" : ""}</p>}
         {shown.map(p => (
@@ -114,24 +129,27 @@ export default function JobPostings() {
               <Link to={`/jobs/${p.id}`} state={detailState.state} className="jp-title-link">{p.title}</Link>
               <span className="jp-sub">
                 <span>{p.category_name}</span>
-                {p.revision_no === 0 && <span className="jm-chip is-muted jp-mini">初版未登録</span>}
-                {p.plan_status && <span className={`jm-dot is-${p.plan_status}`}>{PLAN_STATUS[p.plan_status]}</span>}
+                <PostingFlags posting={p} analysisTo={analysisPath(p)} analysisState={{ postingFrom: location.pathname + location.search }}
+                  onOpen={kind => navigate(`/jobs/${p.id}?open=${kind}`, detailState)} />
               </span>
             </span>
-            <span role="cell" className="jp-media-cell" data-label="媒体">{mediaKey(p.media)}{p.job_id && <span className="jp-id">{p.job_id}</span>}</span>
+            <span role="cell" className="jp-media-cell" data-label="媒体">{mediaKey(p.media)}</span>
             <span role="cell" className="jp-num" data-label="応募者数"><CountButton value={p.applicants} label="応募者" onClick={() => setDialog({ type: "people", posting: p, kind: "applied" })} /></span>
             <span role="cell" className="jp-num" data-label="採用数"><CountButton value={p.hires} label="採用" onClick={() => setDialog({ type: "people", posting: p, kind: "hired" })} /></span>
             <span role="cell" className="jp-vis-cell" data-label="公開状態">
               <VisibilityChip value={p.visibility} />
               {p.visibility_since && <span className="jp-since">{p.visibility_since.replaceAll("-", "/")}〜</span>}
-              <VisibilityButton posting={p} onClick={() => setDialog({ type: "visibility", posting: p })} />
             </span>
-            <span role="cell" className="jp-detail-cell"><button type="button" className="jm-btn is-small" onClick={() => navigate(`/jobs/${p.id}`, detailState)}>詳細</button></span>
+            <span role="cell" className="jp-actions-cell">
+              <VisibilityButton posting={p} onClick={() => setDialog({ type: "visibility", posting: p })} />
+              <button type="button" className="jm-btn is-small jp-detail-btn" onClick={() => navigate(`/jobs/${p.id}`, detailState)}>詳細</button>
+            </span>
           </div>
         ))}
       </div>
 
-      {dialog?.type === "new" && <NewPostingDialog categories={data.categories} media={data.media} onClose={() => setDialog(null)} onSaved={id => navigate(`/jobs/${id}`, detailState)} />}
+      {dialog?.type === "new" && <NewPostingDialog categories={data.categories} media={data.media} onClose={() => setDialog(null)} onSaved={id => navigate(`/jobs/${id}`, detailState)}
+        onCategoriesChanged={() => postingsApi.list().then(res => { if (res.ok) { setData(res.data); return res.data.categories; } return null; })} />}
       {dialog?.type === "visibility" && <VisibilityDialog posting={dialog.posting} onClose={() => setDialog(null)} onSaved={v => done(`「${dialog.posting.title}」を${VISIBILITY[v]}にしました。`)} />}
       {dialog?.type === "people" && <CandidatesModal posting={dialog.posting} kind={dialog.kind} onClose={() => setDialog(null)} />}
     </div>

@@ -6,7 +6,7 @@ import { PLAN_STATUS, fmtCount } from "../../../shared/jobMarketing.mjs";
 import { PlanDialog } from "../marketing/MarketingForms";
 import { postingsApi, errorText } from "./postingsApi";
 import { CandidatesModal, RevisionDialog, VisibilityDialog } from "./PostingDialogs";
-import { CountButton, VisibilityButton, VisibilityChip } from "./JobPostings";
+import { CountButton, PostingFlags, VisibilityButton, VisibilityChip, analysisPath } from "./JobPostings";
 import "../marketing/marketing.css";
 import "./postings.css";
 
@@ -62,7 +62,17 @@ export default function JobPostingDetail() {
     setError("");
   }).catch(() => setError("求人を読み込めませんでした。再読み込みしてください。")), [id]);
   useEffect(() => { load(); }, [load]);
+  // 一覧の状態表示（原稿未登録・掲載種別未設定）から開いた場合は、該当の操作を最初に開く（?open=revision / plan）。1回だけ
+  const openParam = new URLSearchParams(location.search).get("open");
+  useEffect(() => {
+    if (!data || !openParam) return;
+    if (openParam === "revision") setDialog({ type: "revision" });
+    if (openParam === "plan" && data.category) setDialog({ type: "plan" });
+    navigate(location.pathname, { replace: true, state: location.state });
+  }, [data, openParam, navigate, location.pathname, location.state]);
   const done = message => { setDialog(null); setNotice(message); load(); };
+  // 求人分析へ（対象の職種・求人原稿を指定）。求人分析の「求人詳細へ戻る」で、この画面の戻り先（一覧の絞り込み）も引き継ぐ
+  const analysisState = { postingFrom: backTo };
 
   if (error) return <div className="jm-page jp-page"><Link to={backTo} className="jp-back">← 求人一覧へ戻る</Link><p className="jm-error">{error}</p></div>;
   if (!data) return <div className="jm-page jp-page"><p>読込中…</p></div>;
@@ -81,15 +91,17 @@ export default function JobPostingDetail() {
             {p.job_id && <span className="jp-id">求人ID・参照番号 {p.job_id}</span>}
             <VisibilityChip value={p.visibility} />
             {planNow && <span className={`jm-dot is-${planNow}`}>{PLAN_STATUS[planNow]}</span>}
-            <span className="jp-ver">{current ? `第${current.revision_no}版` : "初版未登録"}</span>
+            {current && <span className="jp-ver">第{current.revision_no}版</span>}
           </div>
         </div>
         <div className="jp-detail-actions">
-          <button type="button" className="jm-btn is-primary" onClick={() => setDialog({ type: "revision" })}>{current ? "求人内容を修正" : "初版を登録"}</button>
+          <button type="button" className="jm-btn is-primary" onClick={() => setDialog({ type: "revision" })}>{current ? "求人原稿を編集" : "求人原稿を登録"}</button>
           <VisibilityButton posting={p} onClick={() => setDialog({ type: "visibility" })} />
-          <Link className="jm-btn jp-btn-link" to={`/job-marketing?category=${encodeURIComponent(p.category_id)}`}>求人分析で見る</Link>
+          <Link className="jm-btn jp-btn-link" to={analysisPath(p)} state={analysisState}>求人分析で見る</Link>
         </div>
         <div className="jp-detail-counts">
+          <span className="jp-detail-flags"><PostingFlags posting={p} analysisTo={analysisPath(p)} analysisState={analysisState}
+            onOpen={kind => setDialog({ type: kind === "plan" && category ? "plan" : "revision" })} /></span>
           <span>応募者数</span><CountButton value={p.applicants} label="応募者" onClick={() => setDialog({ type: "people", kind: "applied" })} />
           <span>採用数</span><CountButton value={p.hires} label="採用" onClick={() => setDialog({ type: "people", kind: "hired" })} />
           {/* 現在の状態の日付（公開中なら今回の公開開始日、非公開なら非公開日）。過去の期間は公開状態の履歴に表示 */}
@@ -100,7 +112,7 @@ export default function JobPostingDetail() {
       {notice && <p className="jm-ok" role="status">{notice}</p>}
 
       <section className="jm-card jp-section">
-        <h3 className="jp-h3">求人内容</h3>
+        <h3 className="jp-h3">求人内容<span className="jp-hint">掲載した原稿の全文</span></h3>
         {current ? (
           <>
             <dl className="jp-facts">
@@ -113,7 +125,7 @@ export default function JobPostingDetail() {
           </>
         ) : (
           <>
-            <p className="jm-sub is-info">求人内容は未登録です（初版未登録）。CSVなどで確認済みの情報だけを表示しています。</p>
+            <p className="jm-sub is-info">求人原稿は未登録です。CSVなどで確認済みの情報だけを表示しています。「求人原稿を登録」から原稿の全文を登録してください。</p>
             <dl className="jp-facts">
               {p.csv_title && <><dt>求人名（CSV）</dt><dd>{p.csv_title}</dd></>}
               {p.job_id && <><dt>求人ID・参照番号</dt><dd>{p.job_id}</dd></>}
@@ -166,7 +178,7 @@ export default function JobPostingDetail() {
       </section>
 
       <details className="jm-card jp-section jp-fold-section" open={data.improvements.length > 0}>
-        <summary><h3 className="jp-h3">改善履歴<span className="jm-dot">{data.improvements.length}</span><span className="jp-hint">実績メモ・掲載状態のメモ・求人内容の修正メモ</span></h3></summary>
+        <summary><h3 className="jp-h3">改善履歴<span className="jm-dot">{data.improvements.length}</span><span className="jp-hint">原稿の変更メモ・求人分析の改善メモ・掲載状態の変更メモ</span></h3></summary>
         {data.improvements.length === 0 ? <p className="jm-sub">改善履歴はありません。</p> : (
           <ul className="jp-timeline">
             {data.improvements.map(i => (
@@ -181,17 +193,17 @@ export default function JobPostingDetail() {
       </details>
 
       <details className="jm-card jp-section jp-fold-section">
-        <summary><h3 className="jp-h3">修正履歴<span className="jm-dot">{data.revisions.length}</span></h3></summary>
-        {data.revisions.length === 0 ? <p className="jm-sub">修正履歴はありません（初版未登録）。</p> : (
+        <summary><h3 className="jp-h3">修正履歴<span className="jm-dot">{data.revisions.length}</span><span className="jp-hint">保存した原稿の版ごとの変更内容（修正前・修正後）</span></h3></summary>
+        {data.revisions.length === 0 ? <p className="jm-sub">修正履歴はありません（求人原稿が未登録です）。</p> : (
           <ol className="jp-revisions">
             {data.revisions.map(r => (
               <li key={r.id}>
                 <div className="jp-rev-head"><b>第{r.revision_no}版</b><span>{r.created_at}</span>{r.actor && <span className="jm-meta">{r.actor}</span>}</div>
                 {r.revision_no > 1 ? (
                   <p className="jp-rev-note">修正内容：{r.change_summary}{r.change_reason ? `／修正理由：${r.change_reason}` : ""}</p>
-                ) : <p className="jp-rev-note">初版登録</p>}
+                ) : <p className="jp-rev-note">求人原稿を登録（第1版）{r.change_reason ? `／理由：${r.change_reason}` : ""}</p>}
                 {r.revision_no > 1 ? <Changes changes={r.changes} /> : (
-                  <details className="jp-fold"><summary>初版の内容</summary><Changes changes={r.changes} /></details>
+                  <details className="jp-fold"><summary>登録した内容</summary><Changes changes={r.changes} /></details>
                 )}
               </li>
             ))}
@@ -216,10 +228,10 @@ export default function JobPostingDetail() {
             </table>
           </div>
         )}
-        <p className="jm-actions is-left"><Link className="jm-link" to={`/job-marketing?category=${encodeURIComponent(p.category_id)}`}>求人分析で詳しく見る</Link></p>
+        <p className="jm-actions is-left"><Link className="jm-link" to={analysisPath(p)} state={analysisState}>求人分析で詳しく見る</Link></p>
       </details>
 
-      {dialog?.type === "revision" && <RevisionDialog detail={data} onClose={() => setDialog(null)} onSaved={no => done(no === 1 ? "初版を登録しました。" : `第${no}版として保存しました。`)} />}
+      {dialog?.type === "revision" && <RevisionDialog detail={data} onClose={() => setDialog(null)} onSaved={no => done(no === 1 ? "求人原稿を登録しました。" : `求人原稿を第${no}版として保存しました（前の版は修正履歴に残ります）。`)} />}
       {dialog?.type === "visibility" && <VisibilityDialog posting={p} onClose={() => setDialog(null)} onSaved={v => done(`${VISIBILITY[v]}にしました。`)} />}
       {dialog?.type === "people" && <CandidatesModal posting={p} kind={dialog.kind} onClose={() => setDialog(null)} />}
       {dialog?.type === "plan" && category && (

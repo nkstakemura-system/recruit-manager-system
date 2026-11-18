@@ -15,27 +15,36 @@
 
 /* 一覧（PC：1行1求人の表） */
 .jp-list { background: #fff; border: 1px solid var(--nks-border); border-radius: 12px; overflow: hidden; }
-.jp-row { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 1.2fr) 84px 84px minmax(0, 2fr) 72px; gap: 10px; align-items: center; padding: 9px 14px; border-top: 1px solid #e6ebf2; }
+.jp-row { display: grid; grid-template-columns: minmax(0, 1fr) 120px 76px 76px 150px 196px; gap: 12px; align-items: center; padding: 9px 14px; border-top: 1px solid #e6ebf2; }
 .jp-row:first-child { border-top: 0; }
 .jp-head { background: #f7f9fc; font-size: 12px; font-weight: 700; color: var(--nks-muted); padding-top: 7px; padding-bottom: 7px; }
-.jp-head .jp-num { display: inline-flex; justify-content: center; align-items: center; }
+.jp-head .jp-num { display: flex; justify-content: center; align-items: center; }
 .jp-title { min-width: 0; display: grid; gap: 2px; }
 .jp-title-link { color: var(--nks-navy); font-weight: 700; font-size: 15px; text-decoration: none; overflow-wrap: anywhere; }
 .jp-title-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 .jp-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; color: var(--nks-muted); }
 .jp-media-cell { display: grid; gap: 2px; font-weight: 700; color: var(--nks-ink); min-width: 0; }
 .jp-id { font-size: 11px; font-weight: 400; color: var(--nks-muted); overflow-wrap: anywhere; }
-.jp-num { text-align: center; }
-.jp-count { min-width: 44px; height: 32px; padding: 0 10px; border: 1px solid var(--nks-border); border-radius: 8px; background: #fff; color: var(--nks-navy); font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.jp-num { display: flex; justify-content: center; align-items: center; text-align: center; }
+/* 0 と数字のボタンを同じ大きさにして、列の中央にそろえる */
+.jp-count { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; width: 48px; height: 32px; padding: 0; border: 1px solid var(--nks-border); border-radius: 8px; background: #fff; color: var(--nks-navy); font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .jp-count:hover { border-color: var(--nks-navy); background: #f2f6fb; }
-.jp-count.is-zero { display: inline-block; border-color: transparent; background: none; color: #9aa4b2; text-decoration: none; cursor: default; line-height: 32px; }
+.jp-count.is-zero { border-color: transparent; background: none; color: #9aa4b2; text-decoration: none; cursor: default; }
+/* 状態の表示：押せるもの（下線・枠）と押せない表示（jm-dot）を見た目で区別する */
+.jp-flag { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.jp-flag.is-action { border: 1px solid #f0c98a; background: #fff8ec; color: #7a4a00; }
+.jp-flag.is-link { border: 1px solid var(--nks-border); background: #fff; color: var(--nks-navy); }
+.jp-flag:hover { filter: brightness(.97); }
+.jp-actions-cell { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.jp-actions-cell .jm-btn { height: 32px; font-size: 13px; padding: 0 12px; }
+.jp-actions-cell .jm-btn:first-child { min-width: 120px; }
+.jp-detail-btn { min-width: 56px; }
 .jp-vis-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .jp-vis { display: inline-flex; align-items: center; height: 24px; padding: 0 9px; border-radius: 6px; font-size: 13px; font-weight: 700; white-space: nowrap; }
 .jp-vis.is-public { background: var(--nks-navy); color: #fff; }
 .jp-vis.is-private { background: #e3e6eb; color: #3b4656; }
 .jp-vis.is-unset { background: #fff4e0; color: #7a4a00; }
 .jp-since { font-size: 12px; color: var(--nks-muted); }
-.jp-detail-cell { text-align: right; }
 .jp-empty { margin: 0; padding: 18px 14px; color: var(--nks-muted); }
 
 /* 応募者モーダル */
@@ -46,6 +55,12 @@
 .jp-sel.is-hired { color: var(--nks-navy); background: #eef2f8; border-radius: 4px; padding: 1px 6px; }
 
 /* ダイアログ */
+.jp-select-add { display: flex; gap: 6px; align-items: center; }
+.jp-select-add select { flex: 1; min-width: 0; }
+.jp-add-btn { width: 38px; height: 38px; padding: 0; font-size: 18px; flex: none; }
+.jp-media-hint { display: block; font-size: 12px; font-weight: 400; color: var(--nks-muted); margin-top: 2px; }
+.jp-media-hint .jm-link { margin: 0 4px; font-size: 12px; }
+.jp-detail-flags { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-right: 6px; }
 .jp-body-input { width: 100%; min-height: 180px; font-size: 14px; line-height: 1.7; padding: 8px 10px; border: 1px solid var(--nks-border); border-radius: 8px; resize: vertical; font-family: inherit; }
 .jp-fold { margin-top: 10px; }
 .jp-fold > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--nks-navy); padding: 4px 0; }
@@ -110,14 +125,14 @@
 /* スマホ：カード表示 */
 @media (max-width: 760px) {
   .jp-head { display: none; }
-  .jp-row { grid-template-columns: 1fr 1fr; grid-template-areas: "title title" "media media" "apply hire" "vis vis" "detail detail"; gap: 8px 10px; padding: 12px 14px; }
+  .jp-row { grid-template-columns: 1fr 1fr; grid-template-areas: "title title" "media media" "apply hire" "vis vis" "actions actions"; gap: 8px 10px; padding: 12px 14px; }
   .jp-title { grid-area: title; }
   .jp-media-cell { grid-area: media; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
   .jp-row > .jp-num:nth-child(3) { grid-area: apply; }
   .jp-row > .jp-num:nth-child(4) { grid-area: hire; }
   .jp-vis-cell { grid-area: vis; }
-  .jp-detail-cell { grid-area: detail; text-align: left; }
-  .jp-detail-cell .jm-btn { width: 100%; height: 38px; }
+  .jp-actions-cell { grid-area: actions; justify-content: stretch; }
+  .jp-actions-cell .jm-btn { flex: 1 1 0; height: 38px; font-size: 14px; }
   .jp-row > .jp-num { display: flex; align-items: center; justify-content: flex-start; gap: 8px; text-align: left; }
   .jp-row > .jp-num::before, .jp-media-cell::before { content: attr(data-label); font-size: 12px; font-weight: 700; color: var(--nks-muted); }
   .jp-media-cell::before { margin-right: 4px; }
