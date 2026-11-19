@@ -591,9 +591,30 @@ try {
   await go(app + "/candidates/900003?view=detail", "!!document.querySelector('.nks-source-detail')", "mobile candidate");
   await evaluate(`__click("編集", __q(".nks-source-detail"))`);
   await waitFor(`!!document.querySelector("select[name=job_posting]")`, "mobile picker");
-  // 既存の応募者詳細はスマホで右側の入力欄が画面外に出る（従来からの配置。今回は変更しない）。選択欄が入力欄の幅に収まることを確認する
-  ok("スマホ：応募者編集の媒体・求人の選択（入力欄の幅に収まる）", await evaluate(`(() => { const sel = __q("select[name=job_posting]"); const box = __q(".nks-source-detail").getBoundingClientRect(); const r = sel.getBoundingClientRect(); return r.left >= box.left - 1 && r.right <= box.right + 1 && sel.value === "3"; })()`));
+  // 応募者詳細はスマホでは左のサマリーと右の入力欄を縦に並べる（レスポンシブ対応）。選択欄が入力欄の幅と画面の中に収まることを確認する
+  ok("スマホ：応募者編集の媒体・求人の選択（入力欄の幅・画面の中に収まる）", await evaluate(`(() => { const sel = __q("select[name=job_posting]"); const box = __q(".nks-source-detail").getBoundingClientRect(); const r = sel.getBoundingClientRect(); return r.left >= box.left - 1 && r.right <= box.right + 1 && r.left >= 0 && r.right <= innerWidth + 1 && sel.value === "3"; })()`));
   await shot("10-candidate-picker-mobile");
+  // 中間の幅（VS Code の分割画面など。ウインドウ768〜1000px）：表を無理に縮めず、2段の行で全ての項目・操作を表示する
+  for (const w of [768, 850, 1000]) {
+    viewport = { width: w, height: 900, deviceScaleFactor: 1, mobile: false };
+    await send("Emulation.setDeviceMetricsOverride", viewport);
+    await go(app + "/jobs?view=all", "!!document.querySelector('.jp-list .jp-row:not(.jp-head)')", "mid list " + w);
+    const mid = await evaluate(`(() => {
+      const r = el => el.getBoundingClientRect(); const list = r(__q(".jp-list"));
+      const lh = el => parseFloat(getComputedStyle(el).lineHeight) || 21;
+      const rows = __qa(".jp-row:not(.jp-head)");
+      const titles = rows.map(x => x.querySelector(".jp-title-link")).map(t => ({ len: t.textContent.length, lines: Math.max(1, Math.round(r(t).height / lh(t))) }));
+      const btns = rows.flatMap(x => [...x.querySelectorAll(".jp-actions-cell .jm-btn")]);
+      // 2行以上に折り返した求人名だけで1行あたりの文字数を見る（短い求人名が1行に収まっているのは正常）
+      const wrapped = titles.filter(t => t.lines >= 2);
+      return { head: getComputedStyle(__q(".jp-head")).display, minCharsPerLine: wrapped.length ? Math.min(...wrapped.map(t => t.len / t.lines)) : null, wrappedTitles: wrapped.length,
+        btnsInside: btns.every(b => r(b).right <= list.right + 1 && r(b).left >= list.left - 1 && b.scrollWidth <= b.clientWidth + 2), btns: btns.length, rows: rows.length,
+        countsVisible: rows.every(x => x.querySelectorAll(".jp-count").length === 2), scroll: document.documentElement.scrollWidth <= innerWidth + 1 };
+    })()`);
+    ok(`幅${w}px：見出しを隠して2段の行で表示し、求人名が細かく折り返さず、数字・全ボタンが一覧の中に表示される`,
+      mid.head === "none" && (mid.minCharsPerLine === null || mid.minCharsPerLine >= 8) && mid.btnsInside && mid.btns === mid.rows * 2 && mid.countsVisible && mid.scroll, JSON.stringify(mid));
+  }
+  await shot("11-list-850");
   viewport = { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false };
   await send("Emulation.setDeviceMetricsOverride", viewport);
 

@@ -135,19 +135,31 @@
 .nks-posting-history ul { margin: 6px 0 0; padding-left: 18px; color: var(--nks-muted); }
 
 /* スマホ：カード表示 */
-@media (max-width: 760px) {
+/* 一覧の表示の切替は、画面全体の幅ではなく一覧そのものの幅で判定する（VS Code の分割画面など、ウインドウが広くても一覧が狭い場合に備える）。
+   表の固定幅の列（媒体120・応募者数76・採用数76・公開状態150・操作196・間隔60・内側の余白28＝約706px）に、
+   求人タイトルの列として約250px以上を確保できる幅（一覧の幅960px以上）だけ表にする（170px程度ではタイトルが5〜6行に折り返して読みにくいため）。 */
+.jp-list { container-type: inline-size; container-name: jplist; }
+/* 一覧の幅660〜959px：2段の行（1段目に求人タイトル、2段目に媒体・応募者数・採用数・公開状態・操作） */
+@container jplist (max-width: 959px) {
   .jp-head { display: none; }
-  .jp-row { grid-template-columns: 1fr 1fr; grid-template-areas: "title title" "media media" "apply hire" "vis vis" "actions actions"; gap: 8px 10px; padding: 12px 14px; }
+  .jp-row { grid-template-columns: auto auto auto minmax(0, 1fr) auto; grid-template-areas: "title title title title title" "media apply hire vis actions"; gap: 8px 16px; padding: 12px 14px; }
   .jp-title { grid-area: title; }
   .jp-media-cell { grid-area: media; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
   .jp-row > .jp-num:nth-child(3) { grid-area: apply; }
   .jp-row > .jp-num:nth-child(4) { grid-area: hire; }
   .jp-vis-cell { grid-area: vis; }
-  .jp-actions-cell { grid-area: actions; justify-content: stretch; }
-  .jp-actions-cell .jm-btn { flex: 1 1 0; height: 38px; font-size: 14px; }
+  .jp-actions-cell { grid-area: actions; }
   .jp-row > .jp-num { display: flex; align-items: center; justify-content: flex-start; gap: 8px; text-align: left; }
-  .jp-row > .jp-num::before, .jp-media-cell::before { content: attr(data-label); font-size: 12px; font-weight: 700; color: var(--nks-muted); }
+  .jp-row > .jp-num::before, .jp-media-cell::before { content: attr(data-label); font-size: 12px; font-weight: 700; color: var(--nks-muted); white-space: nowrap; }
   .jp-media-cell::before { margin-right: 4px; }
+}
+/* 一覧の幅659px以下：カード（媒体・数字・公開状態・操作をそれぞれの段に） */
+@container jplist (max-width: 659px) {
+  .jp-row { grid-template-columns: 1fr 1fr; grid-template-areas: "title title" "media media" "apply hire" "vis vis" "actions actions"; gap: 8px 10px; }
+  .jp-actions-cell { justify-content: stretch; }
+  .jp-actions-cell .jm-btn { flex: 1 1 0; height: 38px; font-size: 14px; }
+}
+@media (max-width: 760px) {
   .jp-media { width: 100%; }
   .jp-media select { flex: 1; }
   .jp-detail-head { grid-template-columns: 1fr; }
@@ -156,3 +168,10 @@
   .jp-facts dd { margin-bottom: 6px; }
   .jp-h3-btn { margin-left: 0; }
 }
+
+/* 修正履歴の表：項目名の列は1文字ずつ折り返さない（表は横スクロールで見る） */
+.jp-diff td:first-child, .jp-diff th:first-child { white-space: nowrap !important; }
+
+/* 修正履歴の表：見出しは折り返さず、修正前・修正後の列は狭くなりすぎない（表は横スクロールで見る） */
+.jp-diff th { white-space: nowrap !important; }
+.jp-diff td { min-width: 8em; }

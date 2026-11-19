@@ -258,7 +258,7 @@ const RecruitmentStats = () => {
             marginBottom: "24px",
           }}
         >
-          <div style={{ display: "flex", gap: "32px", flexWrap: "wrap" }}>
+          <div className="nks-stats-filters" style={{ display: "flex", gap: "32px", flexWrap: "wrap" }}>
             {/* 期間指定 */}
             <div>
               <div
@@ -384,7 +384,7 @@ const RecruitmentStats = () => {
         </div>
 
         {/* ===== KPI カード群 ===== */}
-        <div
+        <div className="nks-stats-kpis"
           style={{
             display: "grid",
             gridTemplateColumns: "repeat(5, 1fr)",
@@ -454,7 +454,7 @@ const RecruitmentStats = () => {
               style={{ fontSize: "32px", fontWeight: "bold", color: "#f59e0b" }}
             >
               {costPerHire.toLocaleString()}
-              <span style={{ fontSize: "16px", marginLeft: "4px" }}>円/人</span>
+              <span style={{ fontSize: "16px", marginLeft: "4px", whiteSpace: "nowrap" }}>円/人</span>
             </div>
           </div>
 
@@ -483,7 +483,7 @@ const RecruitmentStats = () => {
               {turnoverRate}
               {baseHeadcount != null && <span style={{ fontSize: "16px", marginLeft: "4px" }}>%</span>}
             </div>
-            <div
+            <div className="nks-stats-base"
               style={{
                 fontSize: "11px",
                 color: "#991b1b",
@@ -549,7 +549,7 @@ const RecruitmentStats = () => {
         </div>
 
         {/* ===== グラフエリア ===== */}
-        <div
+        <div className="nks-stats-charts"
           style={{
             display: "grid",
             gridTemplateColumns: "1fr 1fr",
@@ -571,7 +571,7 @@ const RecruitmentStats = () => {
             >
               応募経路の割合
             </h3>
-            <div style={{ display: "flex", alignItems: "center", gap: "40px" }}>
+            <div className="nks-stats-pie" style={{ display: "flex", alignItems: "center", gap: "40px" }}>
               <div
                 style={{
                   width: "200px",

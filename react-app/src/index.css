@@ -85,3 +85,36 @@ input:disabled, select:disabled, textarea:disabled { background: #edf1f6 !import
 /* 終了・削除済：行をグレーアウト（操作ボタンは従来どおり使える） */
 .nks-row-ended > td { background: #f4f5f7; color: #7b8594 !important; }
 .nks-row-ended > td .nks-list-cell-main > span:first-child, .nks-row-ended .nks-contact-badge { filter: grayscale(1); opacity: .8; }
+
+/* 応募者詳細：画面（VS Code の分割画面を含む）が狭いとき、左のサマリーと右の入力欄を縦に並べる。
+   左メニュー（60px）を除いた表示幅がおよそ720px未満で切り替え、右の入力欄が画面外で切れて操作できなくなるのを防ぐ */
+.nks-detail-tabs > button { white-space: nowrap; }
+@media (max-width: 820px) {
+  .nks-detail-head { flex-wrap: wrap; gap: 4px 16px !important; padding-top: 12px !important; }
+  .nks-detail-head > div:first-child { padding-bottom: 0 !important; }
+  .nks-detail-tabs { max-width: 100%; overflow-x: auto; }
+  .nks-detail-tabs > button { padding: 10px 14px !important; font-size: 14px !important; }
+  .nks-detail-grid { grid-template-columns: minmax(0, 1fr) !important; gap: 16px !important; }
+  .nks-detail-side { position: static !important; margin-bottom: 0 !important; }
+  .nks-detail-main { padding: 18px !important; }
+}
+
+/* 入力欄の行：狭い幅では1項目あたり180px未満に縮めず、次の行に折り返す（入力欄・ラベルの縦書き状態・はみ出しを防ぐ） */
+.nks-row > :not(button) { min-width: min(100%, 180px); }
+
+/* 応募者一覧のタブ：狭い幅では1文字ずつ縦に折り返さず、タブ単位で次の行に回す */
+.nks-list-tabs { flex-wrap: wrap; max-width: 100%; }
+.nks-list-tabs button { white-space: nowrap; }
+
+/* 採用統計：狭い幅ではボタン・カード・グラフを折り返して並べ、文字を1文字ずつ縦に折り返さない */
+.nks-stats-filters > div > div { flex-wrap: wrap; }
+.nks-stats-filters button { white-space: nowrap; }
+.nks-stats-kpis { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)) !important; }
+.nks-stats-charts { grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)) !important; }
+.nks-stats-pie { flex-wrap: wrap; gap: 24px !important; }
+.nks-stats-pie > div:last-child { min-width: min(100%, 220px); }
+.nks-stats-pie span { white-space: nowrap; }
+.nks-stats-base { flex-wrap: wrap; }
+
+/* 応募者詳細の連絡先：「TEL:」「✉:」の見出しは途中で折り返さない */
+.nks-contact-side-row > span:first-child { white-space: nowrap; }

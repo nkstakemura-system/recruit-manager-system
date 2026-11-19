@@ -186,6 +186,8 @@ const s = {
     overflowY: "auto",
     overflowX: "hidden",
     padding: "clamp(20px, 2.5vw, 34px)",
+    // 右下に固定のログアウトボタンがあるため、最後の行・ボタンをその上までスクロールできる余白を確保する
+    paddingBottom: "72px",
     position: "relative",
     boxSizing: "border-box",
   },
@@ -303,6 +305,7 @@ const s = {
   },
   flexRow: {
     display: "flex",
+    flexWrap: "wrap",
     gap: "16px",
     marginBottom: "16px",
     alignItems: "flex-start",
@@ -813,6 +816,7 @@ const CandidateDetail = () => {
       <div style={{ maxWidth: "1200px" }}>
         {/* タブ・ヘッダー */}
         <div
+          className="nks-detail-head"
           style={{
             position: "sticky",
             top: 0,
@@ -834,7 +838,7 @@ const CandidateDetail = () => {
               {returnTo ? `← ${location.state?.fromLabel || "求人一覧へ戻る"}` : "← 一覧へ戻る"}
             </button>
           </div>
-          <div style={{ display: "flex" }}>
+          <div className="nks-detail-tabs" style={{ display: "flex" }}>
             <button
               onClick={() => setActiveTab("detail")}
               style={{
@@ -861,6 +865,7 @@ const CandidateDetail = () => {
         </div>
 
         <div
+          className="nks-detail-grid"
           style={{
             display: "grid",
             gridTemplateColumns: "280px 1fr",
@@ -870,6 +875,7 @@ const CandidateDetail = () => {
         >
           {/* 左サイド：サマリーカード */}
           <div
+            className="nks-detail-side"
             style={{
               ...s.card,
               padding: "20px",
@@ -1158,7 +1164,7 @@ const CandidateDetail = () => {
           </div>
 
           {/* 右サイド：入力エリア */}
-          <div style={{ ...s.card, padding: "30px", marginTop: 0 }}>
+          <div className="nks-detail-main" style={{ ...s.card, padding: "30px", marginTop: 0 }}>
             {activeTab === "detail" && (
               <div>
                 <h4
@@ -1217,7 +1223,7 @@ const CandidateDetail = () => {
                     </details>
                   )}
                 </section>
-                <div style={s.flexRow}>
+                <div className="nks-row" style={s.flexRow}>
                   <div style={{ flex: 1 }}>
                     <label style={s.lbl}>{isCoop ? "担当者名" : "氏名"}</label>
                     <input
@@ -1245,7 +1251,7 @@ const CandidateDetail = () => {
                 </div>
 
                 {!isCoop && (
-                  <div
+                  <div className="nks-row"
                     style={{
                       ...s.flexRow,
                       background: "#f8fafc",
@@ -1296,7 +1302,7 @@ const CandidateDetail = () => {
                       onChange={hChg}
                       onBlur={hBlurHW}
                       placeholder="郵便番号"
-                      style={{ ...s.inp, width: "150px" }}
+                      style={{ ...s.inp, width: "150px", minWidth: 0 }}
                     />
                     <button
                       onClick={() =>
@@ -1355,7 +1361,7 @@ const CandidateDetail = () => {
                 <details className="nks-emergency">
                   <summary>緊急連絡先 <span>クリックして入力・確認</span></summary>
                   <div className="nks-emergency-body">
-                  <div style={s.flexRow}>
+                  <div className="nks-row" style={s.flexRow}>
                     <div style={{ flex: 1 }}>
                       <label style={s.lbl}>氏名</label>
                       <input
@@ -1403,7 +1409,7 @@ const CandidateDetail = () => {
                       onChange={hChg}
                       onBlur={hBlurHW}
                       placeholder="郵便番号"
-                      style={{ ...s.inp, width: "150px" }}
+                      style={{ ...s.inp, width: "150px", minWidth: 0 }}
                     />
                     <button
                       onClick={() =>
@@ -1471,7 +1477,7 @@ const CandidateDetail = () => {
 
                 {!isCoop && (
                   <>
-                    <div style={s.flexRow}>
+                    <div className="nks-row" style={s.flexRow}>
                       <div style={{ flex: 1 }}>
                         <label style={s.lbl}>最終学歴</label>
                         <input
@@ -1638,8 +1644,11 @@ const CandidateDetail = () => {
                   {lic.map((l, i) => (
                     <div
                       key={rowKey(l, i)}
+                      className="nks-row"
                       style={{
                         display: "flex",
+                        flexWrap: "wrap",
+                        alignItems: "center",
                         gap: "12px",
                         marginBottom: "8px",
                       }}
@@ -1791,7 +1800,7 @@ const CandidateDetail = () => {
                         ＋ 家族を追加
                       </button>
                     </div>
-                    <div style={s.flexRow}>
+                    <div className="nks-row" style={s.flexRow}>
                       <div style={{ flex: 1 }}>
                         <label style={s.lbl}>通勤手段</label>
                         <input
@@ -1870,7 +1879,7 @@ const CandidateDetail = () => {
 
                   {!isCoop && (
                     <>
-                      <div style={s.flexRow}>
+                      <div className="nks-row" style={s.flexRow}>
                         <div style={{ flex: 1 }}>
                           <label style={s.lbl}>前職給与</label>
                           <input
@@ -3378,7 +3387,7 @@ const RegistrationForm = () => {
           {!f.is_coop ? (
             /* 個人の場合 */
             <>
-              <div style={s.flexRow}>
+              <div className="nks-row" style={s.flexRow}>
                 <div style={{ flex: 1 }}>
                   <label style={s.lbl}>氏名</label>
                   <input
@@ -3405,7 +3414,7 @@ const RegistrationForm = () => {
                 </div>
               </div>
 
-              <div
+              <div className="nks-row"
                 style={{
                   ...s.flexRow,
                   background: "#f8fafc",
@@ -3431,9 +3440,9 @@ const RegistrationForm = () => {
               </div>
               <div style={{ marginBottom: "16px" }}>
                 <label style={s.lbl}>職種経験</label>
-                <div style={{ display: "flex", gap: "16px" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px" }}>
                   {["経験者", "未経験者", "不明"].map((x) => (
-                    <label key={x} style={{ fontSize: "14px" }}>
+                    <label key={x} style={{ fontSize: "14px", whiteSpace: "nowrap" }}>
                       <input
                         type="radio"
                         value={x}
@@ -3467,7 +3476,7 @@ const RegistrationForm = () => {
                 />
               </div>
 
-              <div style={s.flexRow}>
+              <div className="nks-row" style={s.flexRow}>
                 <div style={{ flex: 1 }}>
                   <div
                     style={{
@@ -3519,7 +3528,7 @@ const RegistrationForm = () => {
                 </div>
               </div>
 
-              <div style={s.flexRow}>
+              <div className="nks-row" style={s.flexRow}>
                 <div style={{ flex: 1 }}>
                   <label style={s.lbl}>希望部署</label>
                   <input
@@ -3798,7 +3807,7 @@ const ExpensePage = () => {
 
         {/* --- 新規登録エリア --- */}
         <div style={s.card}>
-          <div style={s.flexRow}>
+          <div className="nks-row" style={s.flexRow}>
             <div style={{ flex: 2 }}>
               <label style={s.lbl}>支払先</label>
               <input
@@ -3835,7 +3844,7 @@ const ExpensePage = () => {
               </div>
             </div>
           </div>
-          <div style={s.flexRow}>
+          <div className="nks-row" style={s.flexRow}>
             <div style={{ flex: 1 }}>
               <label style={s.lbl}>計上日</label>
               <input
@@ -3864,7 +3873,8 @@ const ExpensePage = () => {
               style={{
                 ...s.tbl,
                 width: "100%",
-                minWidth: "100%",
+                // 狭い幅では支払先の列が縦書き状態にならないよう、表の最小幅を確保して横スクロールにする
+                minWidth: "520px",
                 tableLayout: "fixed",
               }}
             >
@@ -3993,9 +4003,9 @@ const ExpensePage = () => {
                         <td
                           style={{
                             ...s.td,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
+                            // 狭い幅でも支払先を省略（…）せず折り返して全て表示する
+                            minWidth: "6em",
+                            overflowWrap: "anywhere",
                           }}
                         >
                           {e.payee}

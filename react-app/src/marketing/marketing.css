@@ -368,3 +368,21 @@
   .jm-jobs-keys { grid-template-columns: minmax(0, 1fr); }
   .jm-jobs-counts b { font-size: 22px; }
 }
+
+/* 右下に固定のログアウトボタンがあるため、最後の行・ボタンをその上までスクロールできる余白を確保する（狭い幅の指定より後に置く） */
+.jm-page { padding-bottom: 72px; }
+
+/* 表の中の状態表示（集計途中・未登録など）は折り返さない（表は横スクロールで見る。狭い幅の指定より後に置く） */
+.jm-table .jm-chip { white-space: nowrap; overflow-wrap: normal; height: 26px; }
+
+/* 月別のカード（グラフ・数値の表）：中の表の幅でカード自体が広がり、画面の右側が切れる（スマートフォンでは画面全体が縮小表示になる）のを防ぐ。表は表の枠内で横スクロール */
+.jm-month-card { grid-template-columns: minmax(0, 1fr); }
+.jm-month-card > .jm-chart-wrap, .jm-month-card > .jm-fold { justify-self: stretch; min-width: 0; max-width: 100%; }
+
+/* 掲載状態の変更の確認画面（項目名と値の2列）：同じ名前のチェック欄の指定（display: flex）に上書きされ、項目名が縦に折り返していたため、表の形に戻す */
+dl.jm-confirm { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0 16px; align-items: stretch; margin: 0; padding: 0; background: none; border-radius: 0; font-size: 15px; font-weight: 400; color: inherit; }
+dl.jm-confirm dt { white-space: nowrap; }
+
+/* 選択ボタン（掲載状態・指標など）の見えないラジオボタンの基準をボタン自身にする。基準がないと画面の下の方の位置に置かれ、
+   ページ全体（左メニューを含む）が縦にスクロールしてずれる・下に空白が出る原因になっていた */
+.jm-seg label { position: relative; }

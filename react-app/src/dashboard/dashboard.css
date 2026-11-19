@@ -128,3 +128,14 @@
   .nks-dash-card, .nks-kpi-card { break-inside: avoid; }
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
 }
+
+/* 狭い幅：期の選択（◀ 選択欄 ▶）を1行の幅に収め、▶ が画面外に切れないようにする */
+@media (max-width: 640px) {
+  .nks-dash-tools { width: 100%; min-width: 0; }
+  .nks-period { display: flex; width: 100%; min-width: 0; }
+  .nks-period select { flex: 1 1 auto; min-width: 0; }
+  .nks-period button { flex: 0 0 30px; }
+}
+
+/* 月別グラフの月名（8月・10月など）は1文字ずつ折り返さない */
+.nks-chart-month { white-space: nowrap; }
